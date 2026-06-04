@@ -27,6 +27,7 @@
 
 html {
   background: var(--bg);
+  overflow-x: hidden;
 }
 
 body {
@@ -35,6 +36,7 @@ body {
   color: var(--ink);
   background: var(--bg);
   letter-spacing: 0;
+  overflow-x: hidden;
 }
 
 button,
@@ -51,7 +53,7 @@ button {
 .app-shell {
   min-height: 100vh;
   display: grid;
-  grid-template-columns: 216px minmax(0, 1fr);
+  grid-template-columns: 238px minmax(0, 1fr);
 }
 
 .sidebar {
@@ -61,124 +63,131 @@ button {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
-  color: #dbe7f3;
-  background: var(--nav);
-  border-right: 1px solid rgba(255, 255, 255, .08);
+  color: #e6eef6;
+  background:
+    linear-gradient(180deg, rgba(31, 78, 121, .24) 0%, rgba(31, 41, 55, 0) 230px),
+    #182231;
+  border-right: 1px solid rgba(15, 23, 42, .24);
+  box-shadow: 8px 0 24px rgba(15, 23, 42, .06);
 }
 
 .brand {
-  min-height: 78px;
+  padding: 18px 16px 14px;
+}
+
+.brand-logos {
   display: grid;
-  grid-template-columns: 34px 1fr;
-  align-content: center;
-  align-items: center;
-  column-gap: 10px;
-  padding: 15px 18px;
-  background: rgba(255, 255, 255, .98);
-  color: var(--ink);
-  border-bottom: 1px solid var(--line);
+  gap: 11px;
+  padding: 12px 14px;
+  border: 1px solid rgba(255, 255, 255, .12);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, .96);
+  box-shadow: 0 14px 30px rgba(15, 23, 42, .16);
+  overflow: hidden;
 }
 
-.brand-mark {
-  width: 32px;
-  height: 32px;
-  border-radius: 9px;
-  display: grid;
-  place-items: center;
-  color: #fff;
-  font-size: 15px;
-  font-weight: 800;
-  background: var(--brand);
+.brand-logo {
+  display: block;
+  width: 100%;
+  object-fit: contain;
 }
 
-.brand-text {
-  font-family: Georgia, "Times New Roman", serif;
-  font-size: 23px;
-  line-height: 1;
-  font-weight: 700;
-  white-space: nowrap;
+.soaltee-logo {
+  height: 80px;
+  border-radius: 6px;
+  object-fit: cover;
+  object-position: center 48%;
 }
 
-.brand-sub {
-  grid-column: 2;
-  margin-top: 3px;
-  color: #475467;
-  font-size: 15px;
-  font-weight: 700;
+.gate-logo {
+  height: 42px;
+  object-fit: cover;
+  object-position: center 52%;
+}
+
+.brand-divider {
+  height: 1px;
+  background: linear-gradient(90deg, transparent, #d8dee6 18%, #d8dee6 82%, transparent);
 }
 
 .nav-scroll {
   flex: 1;
   overflow: auto;
-  padding: 14px 12px;
+  padding: 8px 13px 14px;
 }
 
 .nav-title {
-  margin: 18px 10px 8px;
-  color: #98a2b3;
+  margin: 20px 8px 9px;
+  color: #9fb1c5;
   font-size: 11px;
   font-weight: 800;
+  letter-spacing: .08em;
   text-transform: uppercase;
 }
 
 .nav-item {
   width: 100%;
-  min-height: 38px;
+  min-height: 42px;
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin-bottom: 3px;
-  padding: 0 10px;
+  gap: 11px;
+  margin-bottom: 4px;
+  padding: 0 11px;
   border: 0;
-  border-radius: 8px;
-  color: #e8eef6;
+  border-radius: 7px;
+  color: #d9e5f0;
   background: transparent;
   text-align: left;
   font-size: 14px;
   font-weight: 650;
+  transition: background .16s ease, color .16s ease, box-shadow .16s ease, transform .16s ease;
 }
 
 .nav-item:hover {
-  background: rgba(255, 255, 255, .07);
+  color: #fff;
+  background: rgba(255, 255, 255, .075);
 }
 
 .nav-item.active,
 .nav-item.finance-active {
   color: #fff;
-  background: #3a4657;
-  box-shadow: inset 3px 0 0 #a9c3da, 0 1px 2px rgba(0, 0, 0, .08);
+  background: linear-gradient(90deg, rgba(255, 255, 255, .18), rgba(255, 255, 255, .08));
+  box-shadow: inset 3px 0 0 #f47b2a, 0 8px 18px rgba(8, 13, 24, .12);
 }
 
 .nav-icon {
-  width: 22px;
-  height: 22px;
+  width: 25px;
+  height: 25px;
   display: inline-grid;
   place-items: center;
-  border-radius: 6px;
-  color: #b6c7d9;
-  background: rgba(255, 255, 255, .06);
-  font-size: 11px;
+  border-radius: 7px;
+  color: #b9c9da;
+  background: rgba(255, 255, 255, .08);
+  font-size: 10px;
   font-weight: 800;
   flex: none;
 }
 
 .nav-item.active .nav-icon,
 .nav-item.finance-active .nav-icon {
-  color: #173b5c;
-  background: #d9e6f2;
+  color: #172033;
+  background: #fff;
 }
 
 .version {
   margin-top: auto;
-  padding: 16px 20px 20px;
-  color: #b9c7d8;
+  padding: 14px 20px 18px;
+  color: #9fb1c5;
   font-size: 12px;
   line-height: 1.7;
   border-top: 1px solid rgba(255, 255, 255, .08);
+  background: rgba(8, 13, 24, .12);
 }
 
 .main {
   min-width: 0;
+  width: 100%;
+  overflow-x: hidden;
 }
 
 .topbar {
@@ -421,6 +430,18 @@ textarea {
 .table-wrap {
   overflow: auto;
   border-radius: 10px;
+  max-width: 100%;
+}
+
+.panel > table,
+.panel .compact-table,
+.challan-paper table {
+  min-width: 640px;
+}
+
+.ticket .compact-table,
+.display-ticket table {
+  min-width: 0;
 }
 
 table {
@@ -1057,6 +1078,7 @@ label .muted {
   padding: 26px;
   color: #101828;
   background: #eef1f4;
+  overflow-x: hidden;
 }
 
 .display-header {
@@ -1252,57 +1274,192 @@ label .muted {
   }
 }
 
+@media (min-width: 1500px) {
+  .display-work-grid {
+    grid-template-columns: repeat(auto-fill, minmax(315px, 1fr));
+  }
+}
+
+@media (max-width: 980px) {
+  .display-header {
+    display: grid;
+    gap: 14px;
+  }
+
+  .display-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .display-work-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .display-metrics {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .display-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 @media (max-width: 760px) {
   .display-screen {
-    padding: 14px;
+    padding: 12px;
   }
 
   .display-header,
   .display-summary,
-  .display-work-grid {
+  .display-work-grid,
+  .display-metrics {
     grid-template-columns: 1fr;
   }
 
   .display-header {
     display: grid;
+    width: 100%;
+    padding: 16px;
+  }
+
+  .display-header h1 {
+    font-size: 26px;
+  }
+
+  .display-clock {
+    font-size: 15px;
+  }
+
+  .display-summary div {
+    padding: 12px 14px;
+  }
+
+  .display-summary b {
+    font-size: 28px;
+  }
+
+  .display-ticket {
+    padding: 12px;
+  }
+
+  .display-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
-@media (max-width: 1280px) {
+@media (max-width: 430px) {
+  .display-screen {
+    padding: 10px;
+  }
+
+  .display-header {
+    border-radius: 14px;
+  }
+
+  .display-ticket-top,
+  .display-ticket-meta {
+    display: block;
+  }
+
+  .display-ticket-meta {
+    margin-top: 10px;
+  }
+
+  .display-time {
+    display: inline-flex;
+    margin-right: 6px;
+  }
+
+  .display-ticket h2 {
+    font-size: 23px;
+  }
+
+  .display-actions button {
+    min-width: 0;
+    padding: 0 6px;
+  }
+}
+
+@media (max-width: 1500px) {
   .kpi-grid {
     grid-template-columns: repeat(4, minmax(150px, 1fr));
   }
 
-  .grid-main,
-  .kitchen-board {
-    grid-template-columns: 1fr;
-  }
-}
-
-@media (max-width: 1600px) {
   .grid-main {
     grid-template-columns: 1fr;
   }
+
+  .kitchen-board {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
-@media (max-width: 1100px) {
+@media (max-width: 1180px) {
   .app-shell {
     grid-template-columns: 1fr;
   }
 
   .sidebar {
-    position: relative;
+    position: sticky;
+    top: 0;
+    z-index: 20;
     height: auto;
     min-height: auto;
-  }
-
-  .nav-scroll {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    display: block;
+    border-right: 0;
+    border-bottom: 1px solid rgba(255, 255, 255, .08);
   }
 
   .brand {
+    padding: 12px 12px 8px;
     border-right: 0;
+  }
+
+  .brand-logos {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 12px;
+  }
+
+  .brand-divider {
+    width: 1px;
+    height: 32px;
+    flex: none;
+    background: #d8dee6;
+  }
+
+  .soaltee-logo {
+    width: 148px;
+    height: 56px;
+    object-position: center 50%;
+  }
+
+  .gate-logo {
+    width: 154px;
+    height: 31px;
+  }
+
+  .nav-scroll {
+    display: flex;
+    gap: 8px;
+    padding: 8px 12px 12px;
+    overflow-x: auto;
+    max-width: 100vw;
+    min-width: 0;
+  }
+
+  .nav-title,
+  .version {
+    display: none;
+  }
+
+  .nav-item {
+    width: auto;
+    min-width: max-content;
+    min-height: 36px;
+    margin: 0;
+    padding: 0 12px;
+    white-space: nowrap;
   }
 
   .grid-2,
@@ -1319,7 +1476,7 @@ label .muted {
   }
 
   .steps {
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   .form-grid {
@@ -1327,13 +1484,96 @@ label .muted {
   }
 
   .topbar {
-    position: relative;
     grid-template-columns: 1fr;
+    gap: 12px;
   }
 
   .top-meta,
   .toolbar {
     flex-wrap: wrap;
+  }
+
+  .field,
+  .search {
+    flex: 1 1 220px;
+  }
+}
+
+@media (max-width: 900px) {
+  .content {
+    padding: 18px 14px 28px;
+  }
+
+  .topbar {
+    padding: 14px 16px;
+  }
+
+  .title h1 {
+    font-size: 22px;
+  }
+
+  .kpi-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .kpi {
+    min-height: 86px;
+    padding: 12px;
+  }
+
+  .kpi strong {
+    font-size: 24px;
+  }
+
+  .flight-header {
+    padding: 14px 16px;
+    gap: 12px;
+  }
+
+  .flight-header strong {
+    font-size: 22px;
+  }
+
+  .steps {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    padding: 0 16px;
+  }
+
+  .step {
+    min-height: 48px;
+  }
+
+  .panel {
+    padding: 14px;
+  }
+
+  .kitchen-board {
+    grid-template-columns: 1fr;
+  }
+
+  .paper-title {
+    margin-top: 0;
+    text-align: left;
+  }
+
+  .signature-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .toolbar .btn,
+  .toolbar .field,
+  .toolbar .search {
+    flex: 1 1 180px;
+  }
+
+  .form-grid,
+  .form-grid.two {
+    grid-template-columns: 1fr;
+  }
+
+  .panel {
+    max-width: 100%;
   }
 }
 
@@ -1349,7 +1589,10 @@ label .muted {
   .kpi-grid,
   .form-grid,
   .form-grid.two,
-  .signature-grid {
+  .signature-grid,
+  .ticket-grid,
+  .production-actions,
+  .chart-header {
     grid-template-columns: 1fr;
   }
 
@@ -1357,6 +1600,136 @@ label .muted {
   .search,
   .btn {
     width: 100%;
+  }
+
+  .brand {
+    padding: 10px 12px 7px;
+  }
+
+  .brand-logos {
+    gap: 9px;
+  }
+
+  .soaltee-logo {
+    width: 132px;
+    height: 52px;
+  }
+
+  .gate-logo {
+    width: 126px;
+    height: 28px;
+  }
+
+  .top-meta {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%;
+  }
+
+  .top-meta > span:not(.user-pill),
+  .user-pill {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .toolbar {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .steps {
+    display: flex;
+    overflow-x: auto;
+    padding-bottom: 0;
+  }
+
+  .step {
+    min-width: 190px;
+  }
+
+  .mini-input {
+    width: 52px;
+  }
+
+  .preview-layout,
+  .invoice-layout,
+  .matrix-page {
+    display: block;
+  }
+
+  .paper-grid,
+  .paper-grid.equal,
+  .paper-grid.three {
+    display: block;
+  }
+
+  .challan-paper {
+    padding: 12px;
+  }
+
+  .modal-backdrop {
+    padding: 12px;
+  }
+
+  .modal-head,
+  .modal-foot {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
+
+@media (max-width: 520px) {
+  .content {
+    padding: 14px 10px 24px;
+  }
+
+  .topbar {
+    padding: 12px;
+  }
+
+  .title h1 {
+    font-size: 20px;
+  }
+
+  .title p {
+    font-size: 13px;
+  }
+
+  .kpi-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .kpi {
+    grid-template-columns: 34px 1fr;
+  }
+
+  .kpi-icon {
+    width: 34px;
+    height: 34px;
+  }
+
+  .top-meta {
+    grid-template-columns: 1fr;
+  }
+
+  .flight-header {
+    padding: 12px;
+  }
+
+  .panel {
+    padding: 12px;
+  }
+
+  .ticket {
+    padding: 13px;
+  }
+
+  .ticket h3 {
+    font-size: 22px;
+  }
+
+  .copy-footer {
+    text-align: left;
   }
 }
 

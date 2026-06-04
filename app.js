@@ -348,9 +348,11 @@ function layout(title, subtitle, body, mode = "operations") {
     <div class="app-shell">
       <aside class="sidebar">
         <div class="brand">
-          <div class="brand-mark">S</div>
-          <div class="brand-text">The Soaltee</div>
-          <div class="brand-sub">Gategourmet</div>
+          <div class="brand-logos" aria-label="The Soaltee and Gate Gourmet">
+            <img class="brand-logo soaltee-logo" src="659d29fe3627d_1704798718.png" alt="The Soaltee logo">
+            <span class="brand-divider"></span>
+            <img class="brand-logo gate-logo" src="gate-gourmet-logo-vector.svg" alt="Gate Gourmet logo">
+          </div>
         </div>
         <div class="nav-scroll">
           <div class="nav-title">Operations</div>

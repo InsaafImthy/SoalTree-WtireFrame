@@ -26,17 +26,22 @@
 }
 
 html {
+  height: 100%;
   background: var(--bg);
-  overflow-x: hidden;
+  overflow: hidden;
 }
 
 body {
+  height: 100%;
   margin: 0;
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+  font-weight: 400;
   color: var(--ink);
   background: var(--bg);
   letter-spacing: 0;
-  overflow-x: hidden;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 button,
@@ -51,16 +56,20 @@ button {
 }
 
 .app-shell {
-  min-height: 100vh;
+  height: 100vh;
+  height: 100dvh;
+  min-height: 0;
   display: grid;
   grid-template-columns: 238px minmax(0, 1fr);
+  overflow: hidden;
 }
 
 .sidebar {
-  position: sticky;
-  top: 0;
+  position: relative;
   height: 100vh;
+  height: 100dvh;
   min-height: 100vh;
+  min-height: 100dvh;
   display: flex;
   flex-direction: column;
   color: #e6eef6;
@@ -69,6 +78,7 @@ button {
     #182231;
   border-right: 1px solid rgba(15, 23, 42, .24);
   box-shadow: 8px 0 24px rgba(15, 23, 42, .06);
+  overflow: hidden;
 }
 
 .brand {
@@ -112,7 +122,8 @@ button {
 
 .nav-scroll {
   flex: 1;
-  overflow: auto;
+  min-height: 0;
+  overflow: visible;
   padding: 8px 13px 14px;
 }
 
@@ -152,7 +163,7 @@ button {
 .nav-item.finance-active {
   color: #fff;
   background: linear-gradient(90deg, rgba(255, 255, 255, .18), rgba(255, 255, 255, .08));
-  box-shadow: inset 3px 0 0 #f47b2a, 0 8px 18px rgba(8, 13, 24, .12);
+  box-shadow: 0 8px 18px rgba(8, 13, 24, .12);
 }
 
 .nav-icon {
@@ -175,6 +186,7 @@ button {
 }
 
 .version {
+  flex: none;
   margin-top: auto;
   padding: 14px 20px 18px;
   color: #9fb1c5;
@@ -187,7 +199,11 @@ button {
 .main {
   min-width: 0;
   width: 100%;
+  height: 100vh;
+  height: 100dvh;
   overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .topbar {
@@ -286,6 +302,13 @@ button {
   margin-bottom: 16px;
 }
 
+.kitchen-launch-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(160px, 1fr));
+  gap: 14px;
+  margin-top: 14px;
+}
+
 .kpi {
   min-height: 112px;
   display: grid;
@@ -375,6 +398,11 @@ textarea:focus,
   box-shadow: 0 0 0 3px rgba(18, 107, 69, .12);
 }
 
+.readonly-input {
+  color: #475569;
+  background: #f8fafc;
+}
+
 textarea {
   min-height: 82px;
   resize: vertical;
@@ -434,9 +462,13 @@ textarea {
 }
 
 .panel > table,
-.panel .compact-table,
-.challan-paper table {
+.panel .compact-table {
   min-width: 640px;
+}
+
+.challan-paper table {
+  min-width: 0;
+  table-layout: fixed;
 }
 
 .ticket .compact-table,
@@ -616,15 +648,23 @@ label .muted {
   align-items: center;
   gap: 8px;
   padding: 0 10px;
+  border: 0;
   border-bottom: 3px solid transparent;
   color: #475569;
+  background: transparent;
   font-size: 13px;
   font-weight: 700;
+  text-align: left;
 }
 
 .step.active {
   color: var(--brand);
   border-color: var(--brand);
+}
+
+.step.complete b {
+  color: #fff;
+  background: #25614b;
 }
 
 .step b {
@@ -659,6 +699,32 @@ label .muted {
   padding: 16px;
   margin-bottom: 18px;
   overflow: auto;
+}
+
+.kot-stage {
+  min-height: 420px;
+}
+
+.panel-head,
+.stage-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.stage-footer {
+  padding: 14px 16px;
+  margin-bottom: 6px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.btn:disabled {
+  cursor: not-allowed;
+  opacity: .48;
 }
 
 .panel h2,
@@ -721,6 +787,11 @@ label .muted {
   background: #f8fafc;
 }
 
+.compact-notice {
+  align-items: flex-start;
+  margin-bottom: 16px;
+}
+
 .preview-layout,
 .invoice-layout {
   display: grid;
@@ -781,6 +852,14 @@ label .muted {
   grid-template-columns: 1fr 1fr;
 }
 
+.challan-flight-grid {
+  grid-template-columns: minmax(0, .9fr) minmax(400px, 1.1fr);
+}
+
+.challan-meal-grid {
+  align-items: start;
+}
+
 .paper-grid.three {
   grid-template-columns: 1.3fr .85fr .95fr;
 }
@@ -789,6 +868,72 @@ label .muted {
 .compact-table td {
   padding: 7px 8px;
   font-size: 12px;
+}
+
+.kot-loaded-table {
+  min-width: 0 !important;
+}
+
+.kot-loaded-table th,
+.kot-loaded-table td {
+  padding: 7px 7px;
+  font-size: 11px;
+}
+
+.kot-loaded-table th:nth-child(2),
+.kot-loaded-table td:nth-child(2) {
+  white-space: normal;
+  min-width: 220px;
+}
+
+.challan-paper .compact-table th,
+.challan-paper .compact-table td {
+  white-space: normal;
+  word-break: break-word;
+}
+
+.challan-paper .load-table th,
+.challan-paper .load-table td,
+.challan-paper .meal-table th,
+.challan-paper .meal-table td {
+  word-break: normal;
+}
+
+.challan-paper .load-table th:first-child,
+.challan-paper .load-table td:first-child {
+  width: 36%;
+  text-align: left;
+}
+
+.challan-paper .meal-table th:first-child,
+.challan-paper .meal-table td:first-child {
+  width: 28%;
+  text-align: left;
+}
+
+.challan-paper .meal-table th:last-child,
+.challan-paper .meal-table td:last-child,
+.challan-paper .ancillary-table th:last-child,
+.challan-paper .ancillary-table td:last-child,
+.challan-paper .special-meals-table th:last-child,
+.challan-paper .special-meals-table td:last-child {
+  width: 12%;
+  text-align: center;
+  font-weight: 800;
+}
+
+.challan-paper .special-meals-table th,
+.challan-paper .special-meals-table td {
+  padding-left: 5px;
+  padding-right: 5px;
+  font-size: 11px;
+}
+
+.challan-paper .num,
+.challan-paper th.num,
+.challan-paper td.num,
+.challan-paper .total-row td {
+  text-align: center;
 }
 
 .signature-grid {
@@ -863,6 +1008,16 @@ label .muted {
   gap: 18px 28px;
 }
 
+.chart-header textarea {
+  min-height: 40px;
+}
+
+.panel-subsection {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
 .day-pills {
   display: flex;
   align-items: center;
@@ -904,6 +1059,53 @@ label .muted {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 280px;
   gap: 18px;
+}
+
+.cell-input {
+  min-width: 96px;
+  min-height: 34px;
+  padding: 6px 8px;
+  border-radius: 7px;
+  font-size: 12px;
+}
+
+.dish-input {
+  min-width: 260px;
+}
+
+.chart-capacity-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(420px, .8fr);
+  gap: 14px;
+}
+
+.capacity-cards {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(76px, 1fr));
+  gap: 8px;
+}
+
+.capacity-cards div {
+  min-height: 56px;
+  display: grid;
+  align-content: center;
+  gap: 4px;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  text-align: center;
+  background: #f8fafc;
+}
+
+.capacity-cards span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.capacity-cards b {
+  font-size: 18px;
+  color: var(--ink);
 }
 
 .modal-backdrop {
@@ -1071,6 +1273,345 @@ label .muted {
   box-shadow: 0 14px 34px rgba(16, 24, 40, .16);
   font-size: 13px;
   font-weight: 750;
+}
+
+.kitchen-display-board {
+  min-height: 100vh;
+  padding: 18px;
+  color: #f8fbff;
+  background:
+    linear-gradient(180deg, rgba(18, 48, 70, .72) 0%, rgba(9, 30, 45, 0) 260px),
+    #0b1824;
+  overflow: auto;
+}
+
+.kitchen-display-head {
+  min-height: 74px;
+  display: grid;
+  grid-template-columns: 340px minmax(0, 1fr) 300px;
+  gap: 18px;
+  align-items: center;
+  padding: 2px 10px 16px;
+}
+
+.kitchen-display-brand {
+  display: grid;
+  grid-template-columns: 150px 1px minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+  padding: 6px 10px;
+  border: 1px solid rgba(255, 255, 255, .22);
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, .22);
+  overflow: hidden;
+}
+
+.kitchen-display-brand img {
+  width: 100%;
+  max-height: 64px;
+  object-fit: contain;
+}
+
+.kitchen-soaltee-logo {
+  height: 62px;
+  object-fit: cover !important;
+  object-position: center 58%;
+}
+
+.kitchen-gate-logo {
+  height: 38px;
+  object-fit: contain !important;
+  object-position: center;
+}
+
+.kitchen-display-brand span {
+  height: 34px;
+  background: #d8dee6;
+}
+
+.kitchen-display-head h1 {
+  margin: 0;
+  text-align: center;
+  color: #fff;
+  font-size: 34px;
+  line-height: 1.1;
+  font-weight: 780;
+  letter-spacing: .02em;
+  text-transform: uppercase;
+}
+
+.kitchen-display-time {
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  gap: 8px;
+  align-items: baseline;
+  justify-items: end;
+  color: #fff;
+}
+
+.kitchen-display-time b {
+  color: #f7d154;
+  font-size: 18px;
+}
+
+.kitchen-display-time span {
+  color: #fff;
+  font-size: 16px;
+}
+
+.kitchen-display-time strong {
+  font-size: 26px;
+  font-weight: 760;
+}
+
+.kitchen-display-time small {
+  grid-column: 1 / -1;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #e8fff0;
+  font-size: 13px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.kitchen-display-time i {
+  width: 10px;
+  height: 10px;
+  display: inline-block;
+  border-radius: 50%;
+  background: #49d165;
+  box-shadow: 0 0 10px rgba(73, 209, 101, .9);
+}
+
+.kitchen-kpis {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(136px, 1fr));
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.kitchen-kpi {
+  min-height: 84px;
+  display: grid;
+  grid-template-columns: 54px minmax(0, 1fr);
+  gap: 14px;
+  align-items: center;
+  padding: 12px 14px;
+  border: 1px solid rgba(116, 204, 255, .36);
+  border-radius: 6px;
+  background: rgba(5, 20, 33, .9);
+  box-shadow: inset 0 0 22px rgba(50, 175, 255, .06), 0 0 18px rgba(0, 0, 0, .18);
+}
+
+.kitchen-kpi span {
+  width: 54px;
+  height: 54px;
+  display: grid;
+  place-items: center;
+  font-size: 18px;
+  font-weight: 900;
+}
+
+.kitchen-kpi small,
+.kitchen-kpi em {
+  display: block;
+  font-size: 13px;
+  font-style: normal;
+  font-weight: 760;
+  letter-spacing: .02em;
+  text-transform: uppercase;
+}
+
+.kitchen-kpi b {
+  display: inline-block;
+  margin-top: 2px;
+  font-size: 34px;
+  line-height: 1;
+  font-weight: 760;
+}
+
+.kitchen-kpi.blue { color: #5cb6ff; border-color: rgba(92, 182, 255, .48); }
+.kitchen-kpi.green { color: #7bd96e; border-color: rgba(123, 217, 110, .48); }
+.kitchen-kpi.amber { color: #ffc453; border-color: rgba(255, 196, 83, .55); }
+.kitchen-kpi.purple { color: #d45cff; border-color: rgba(212, 92, 255, .5); }
+.kitchen-kpi.cyan { color: #5ee5e9; border-color: rgba(94, 229, 233, .48); }
+.kitchen-kpi.red { color: #ff5b69; border-color: rgba(255, 91, 105, .58); background: rgba(44, 8, 14, .78); }
+
+.kitchen-board-table-wrap {
+  overflow: auto;
+  border: 1px solid rgba(133, 175, 205, .55);
+  border-radius: 6px;
+  background: rgba(4, 17, 27, .92);
+}
+
+.kitchen-board-table {
+  width: 100%;
+  min-width: 0;
+  table-layout: fixed;
+  border-collapse: collapse;
+}
+
+.kitchen-board-table th,
+.kitchen-board-table td {
+  padding: 8px 6px;
+  border: 1px solid rgba(133, 175, 205, .42);
+  color: #fff;
+  background: rgba(3, 18, 30, .88);
+  text-align: center;
+  white-space: nowrap;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.kitchen-board-table th {
+  position: static;
+  color: #fff;
+  background: rgba(9, 28, 45, .98);
+  font-size: 13px;
+  font-weight: 760;
+  letter-spacing: .02em;
+  text-transform: uppercase;
+}
+
+.kitchen-board-table .col-std { width: 5.1%; }
+.kitchen-board-table .col-flight { width: 6.4%; }
+.kitchen-board-table .col-airline { width: 10.7%; }
+.kitchen-board-table .col-sector { width: 6.6%; }
+.kitchen-board-table .col-small { width: 3.25%; }
+.kitchen-board-table .col-total { width: 4.4%; }
+.kitchen-board-table .col-meal { width: 7.8%; }
+.kitchen-board-table .col-crew { width: 6.9%; }
+.kitchen-board-table .col-qty { width: 3.35%; }
+.kitchen-board-table .col-time { width: 6.2%; }
+.kitchen-board-table .col-status { width: 6.9%; }
+
+.kitchen-board-table tbody tr:nth-child(even) td {
+  background: rgba(5, 22, 35, .9);
+}
+
+.kitchen-board-table tbody tr:hover td {
+  background: rgba(8, 34, 52, .96);
+}
+
+.kitchen-std {
+  color: #ffd84f !important;
+  font-size: 19px !important;
+  font-weight: 760 !important;
+}
+
+.kitchen-flight-no {
+  font-size: 19px !important;
+  font-weight: 760 !important;
+}
+
+.kitchen-airline {
+  display: inline-block;
+  max-width: 100%;
+  font-size: 18px;
+  font-weight: 760;
+  text-align: center;
+}
+
+.kitchen-airline.flydubai { color: #e98235; }
+.kitchen-airline.qatar { color: #c33172; }
+.kitchen-airline.spice { color: #f05d48; }
+.kitchen-airline.airindia { color: #ff4646; }
+
+.kitchen-total-pax {
+  color: #f8d24e !important;
+  font-size: 18px !important;
+  font-weight: 800 !important;
+}
+
+.meal-code {
+  display: grid;
+  gap: 2px;
+  font-size: 16px;
+  line-height: 1.05;
+  font-weight: 720;
+}
+
+.meal-code small {
+  color: #fff;
+  font-size: 11px;
+  font-weight: 400;
+}
+
+.kitchen-time-cell {
+  color: #81d56b !important;
+  font-size: 18px !important;
+  font-weight: 720 !important;
+}
+
+.kitchen-status {
+  width: 100%;
+  min-width: 0;
+  display: inline-flex;
+  justify-content: center;
+  padding: 7px 8px;
+  border-radius: 4px;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 820;
+  text-transform: uppercase;
+}
+
+.kitchen-status.on-time,
+.kitchen-status.confirmed {
+  background: #159447;
+}
+
+.kitchen-status.scheduled {
+  background: #1859aa;
+}
+
+.kitchen-status.in-progress {
+  background: #d97825;
+}
+
+.high-load-flight td {
+  box-shadow: inset 0 0 0 999px rgba(95, 8, 16, .16);
+}
+
+.high-load-flight .kitchen-total-pax {
+  animation: highLoadFlash 1s steps(2, end) infinite;
+}
+
+@keyframes highLoadFlash {
+  0%, 100% {
+    color: #fff !important;
+    background: #d11828;
+    box-shadow: 0 0 18px rgba(255, 53, 72, .8);
+  }
+  50% {
+    color: #ffed68 !important;
+    background: rgba(209, 24, 40, .28);
+    box-shadow: none;
+  }
+}
+
+.kitchen-display-foot {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 14px 18px 0;
+  color: #fff;
+  font-size: 16px;
+}
+
+.kitchen-display-foot div {
+  display: flex;
+  gap: 18px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.kitchen-display-foot b {
+  color: #86d765;
+  text-transform: uppercase;
 }
 
 .display-screen {
@@ -1264,6 +1805,67 @@ label .muted {
   font-weight: 800;
 }
 
+strong,
+b {
+  font-weight: 640;
+}
+
+.title h1,
+.flight-header strong,
+.kpi strong,
+.paper-title,
+.serial strong,
+.ticket h3,
+.display-header h1,
+.display-summary b {
+  font-weight: 660;
+}
+
+.nav-title,
+.nav-item,
+.nav-icon,
+.top-meta,
+.avatar,
+.kpi-icon,
+.kpi small,
+.btn,
+th,
+.total-row td,
+.logo-airline,
+.badge,
+.blue-text,
+.flight-header label,
+.info-row label,
+label .muted,
+.step,
+.panel h2,
+.panel h3,
+.mini-card b,
+.summary-total,
+.summary-line b,
+.day-pills b,
+.tabs button,
+.display-actions button,
+.display-empty {
+  font-weight: 600;
+}
+
+.challan-paper b,
+.challan-paper strong,
+.challan-paper th,
+.challan-paper .total-row td {
+  font-weight: 620;
+}
+
+.muted,
+.title p,
+.footer-note,
+.version,
+td,
+.compact-table td {
+  font-weight: 400;
+}
+
 @media (max-width: 1200px) {
   .display-work-grid {
     grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
@@ -1384,6 +1986,10 @@ label .muted {
     grid-template-columns: repeat(4, minmax(150px, 1fr));
   }
 
+  .kitchen-launch-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .grid-main {
     grid-template-columns: 1fr;
   }
@@ -1396,17 +2002,20 @@ label .muted {
 @media (max-width: 1180px) {
   .app-shell {
     grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(0, 1fr);
   }
 
   .sidebar {
-    position: sticky;
-    top: 0;
     z-index: 20;
     height: auto;
     min-height: auto;
     display: block;
     border-right: 0;
     border-bottom: 1px solid rgba(255, 255, 255, .08);
+  }
+
+  .main {
+    height: 100%;
   }
 
   .brand {
@@ -1466,6 +2075,7 @@ label .muted {
   .preview-layout,
   .invoice-layout,
   .matrix-page,
+  .chart-capacity-panel,
   .paper-head,
   .paper-grid,
   .paper-grid.equal,
@@ -1491,6 +2101,10 @@ label .muted {
   .top-meta,
   .toolbar {
     flex-wrap: wrap;
+  }
+
+  .capacity-cards {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   .field,
@@ -1587,12 +2201,14 @@ label .muted {
   }
 
   .kpi-grid,
+  .kitchen-launch-grid,
   .form-grid,
   .form-grid.two,
   .signature-grid,
   .ticket-grid,
   .production-actions,
-  .chart-header {
+  .chart-header,
+  .capacity-cards {
     grid-template-columns: 1fr;
   }
 

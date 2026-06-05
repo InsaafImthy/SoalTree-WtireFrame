@@ -1,11 +1,41 @@
 const STORAGE_KEY = "soaltee-kot-wireframe-state-v1";
+const KOT_STEPS = ["Flight Info", "Pax Load", "Meal Choices", "Special Meals", "Ancillaries", "Review & Summary"];
 
 const seed = {
   screen: "queue",
   selectedFlight: "FZ576",
+  kotStep: 0,
   challanLocked: false,
   queueFilters: { status: "All Status", airline: "All Airlines", sector: "All Sectors", search: "" },
   invoice: { status: "draft", number: "", generatedAt: "" },
+  loadingChart: {
+    airline: "FlyDubai",
+    aircraftType: "B737-800",
+    flightNo: "FZ576",
+    sector: "KTM - DXB",
+    mealType: "Hot Breakfast",
+    mealTime: "05:10",
+    chartCode: "MLC-FZ576-15062026-03",
+    version: "3",
+    effectiveFrom: "15/06/2026",
+    effectiveTo: "24/08/2026",
+    rotationFrom: "01-FEB-2026",
+    rotationTo: "28-FEB-2026",
+    notes: "FlyDubai Hot Breakfast MLC",
+    capacity: { total: 189, j: 12, w: 0, y: 180, crew: 3 },
+    rows: [
+      { code: "DS 010187", name: "SEASONAL FRUIT CUT CUBE BOWL 120GM", unit: "Bowl", ratioType: "1 : 1 (Per Pax)", ratioValue: "1:1", remarks: "Per Pax" },
+      { code: "DS 010528", name: "MIX YOGHURT GRANOLA APPLE", unit: "Cup", ratioType: "1 : 1 (Per Pax)", ratioValue: "1:1", remarks: "Per Pax" },
+      { code: "DS 010523", name: "MUSHROOM AND CHEESE OMELETTE KTM", unit: "Pcs", ratioType: "J (Business)", ratioValue: "JH150", remarks: "JH150 = 6 Pcs" },
+      { code: "DS 010150", name: "POTATOES KTM", unit: "Pcs", ratioType: "J (Business)", ratioValue: "JH150", remarks: "JH150 = 7 Pcs" },
+      { code: "DS 010186", name: "VERMICELLI UTTAPAM KTM", unit: "Pcs", ratioType: "J (Business)", ratioValue: "JH150", remarks: "JH150 = 7 Pcs" },
+      { code: "DS 010122", name: "CROISSANT 30 GM", unit: "Pcs", ratioType: "1 : 1 (Per Pax)", ratioValue: "1:1", remarks: "Per Pax" },
+      { code: "DS 010123", name: "SOFT ROLL 35 GM", unit: "Pcs", ratioType: "1 : 1 (Per Pax)", ratioValue: "1:1", remarks: "Per Pax" },
+      { code: "DS 010261", name: "BUTTER PORTION JC", unit: "Pcs", ratioType: "1 : 1 (Per Pax)", ratioValue: "1:1", remarks: "Per Pax" },
+      { code: "DS 010351", name: "JAM PORTION JC", unit: "Pcs", ratioType: "1 : 1 (Per Pax)", ratioValue: "1:1", remarks: "Per Pax" },
+      { code: "TS 090002", name: "JC TSU", unit: "Set", ratioType: "1 : 1 (Per Pax)", ratioValue: "1:1", remarks: "Per Pax" }
+    ]
+  },
   flights: [
     { std: "11:30", flightNo: "FZ576", airline: "FlyDubai", airlineClass: "flydubai", sector: "DXB - KTM", aircraft: "B737-800", reg: "A6-FDU", config: "182 Y", j: 12, y: 180, tc: 2, cc: 8, menu: "CYCLE-A", kot: "pending", meal: "not started", dispatch: "pending", production: "pending" },
     { std: "13:20", flightNo: "QR647", airline: "Qatar Airways", airlineClass: "qatar", sector: "DOH - KTM", aircraft: "A320neo", reg: "A7-AHL", config: "232 Y", j: 8, y: 232, tc: 2, cc: 10, menu: "CYCLE-B", kot: "pending", meal: "not started", dispatch: "pending", production: "pending" },
@@ -75,6 +105,10 @@ const requestedScreen = new URLSearchParams(window.location.search).get("screen"
 if (requestedScreen) {
   state.screen = requestedScreen;
 }
+const requestedKotStep = new URLSearchParams(window.location.search).get("kotStep");
+if (requestedKotStep !== null) {
+  state.kotStep = Number(requestedKotStep) || 0;
+}
 normalizeState();
 if (state.screen === "kitchen-display") {
   window.setInterval(() => {
@@ -98,7 +132,11 @@ function loadState() {
 function normalizeState() {
   state.queueFilters = { ...structuredClone(seed.queueFilters), ...(state.queueFilters || {}) };
   state.invoice = { ...structuredClone(seed.invoice), ...(state.invoice || {}) };
+  state.loadingChart = { ...structuredClone(seed.loadingChart), ...(state.loadingChart || {}) };
+  state.loadingChart.capacity = { ...structuredClone(seed.loadingChart.capacity), ...(state.loadingChart.capacity || {}) };
+  state.loadingChart.rows = Array.isArray(state.loadingChart.rows) && state.loadingChart.rows.length ? state.loadingChart.rows : structuredClone(seed.loadingChart.rows);
   state.kot = { ...structuredClone(seed.kot), ...(state.kot || {}) };
+  state.kotStep = Math.min(Math.max(Number(state.kotStep) || 0, 0), KOT_STEPS.length - 1);
   state.flights = Array.isArray(state.flights) && state.flights.length ? state.flights : structuredClone(seed.flights);
 }
 
@@ -124,10 +162,17 @@ function selectedFlight() {
 
 function setSelectedFlight(flightNo, screen = "kot") {
   state.selectedFlight = flightNo;
+  if (screen === "kot") state.kotStep = 0;
   saveState();
   render(screen);
   setScreen(screen);
   openFlightModal();
+}
+
+function setKotStep(step) {
+  state.kotStep = Math.min(Math.max(Number(step) || 0, 0), KOT_STEPS.length - 1);
+  saveState();
+  render();
 }
 
 function updateProduction(flightNo, status) {
@@ -158,6 +203,17 @@ function copyFirstToSecond() {
   state.kot.secondService = state.kot.firstService.map((row) => [...row]);
   saveState();
   showToast("First service meal choices copied to second service.");
+  render();
+}
+
+function updateLoadingRow(index, key, value) {
+  const row = state.loadingChart.rows[index];
+  if (!row) return;
+  row[key] = value;
+  if (key === "ratioType" || key === "ratioValue") {
+    row.remarks = row.ratioValue === "1:1" ? "Per Pax" : `${row.ratioValue} ratio`;
+  }
+  saveState();
   render();
 }
 
@@ -229,7 +285,11 @@ function previewInvoice() {
 }
 
 function downloadDemoDocument(type) {
-  const content = type === "invoice" ? `Invoice ${state.invoice.number || "Draft"}\nChallan ${state.kot.challanNo}\nGrand Total USD 1,557.71` : `Challan ${state.kot.challanNo}\nFlight ${selectedFlight().flightNo}\nStatus ${selectedFlight().dispatch}`;
+  const content = type === "invoice"
+    ? `Invoice ${state.invoice.number || "Draft"}\nChallan ${state.kot.challanNo}\nGrand Total USD 1,557.71`
+    : type === "loading-chart"
+      ? `Meal Loading Chart ${state.loadingChart.chartCode}\nFlight ${state.loadingChart.flightNo}\nTotal capacity ${chartTotalPax()}\nTotal quantity ${totalLoadingQuantity()}`
+      : `Challan ${state.kot.challanNo}\nFlight ${selectedFlight().flightNo}\nStatus ${selectedFlight().dispatch}`;
   const blob = new Blob([content], { type: "text/plain" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
@@ -309,8 +369,8 @@ function isActiveNav(label, screen) {
     challan: "Challan",
     "challan-preview": "Challan Preview",
     invoice: "Invoice",
-    "loading-maintenance": "Loading Chart",
-    "loading-preview": "Loading Preview"
+    "loading-maintenance": "MLC Maintenance",
+    "loading-preview": "MLC Preview"
   };
   return state.screen === screen && activeLabels[state.screen] === label;
 }
@@ -337,8 +397,8 @@ function navIcon(label) {
     Configurations: "CF",
     "Kitchen Board": "KB",
     "Invoice": "IN",
-    "Loading Chart": "LC",
-    "Loading Preview": "LP"
+    "MLC Maintenance": "LC",
+    "MLC Preview": "LP"
   };
   return icons[label] || "--";
 }
@@ -364,8 +424,8 @@ function layout(title, subtitle, body, mode = "operations") {
           <div class="nav-title">Finance</div>
           ${button("Invoice", "invoice")}
           <div class="nav-title">Loading Charts</div>
-          ${button("Loading Chart", "loading-maintenance")}
-          ${button("Loading Preview", "loading-preview")}
+          ${button("MLC Maintenance", "loading-maintenance")}
+          ${button("MLC Preview", "loading-preview")}
         </div>
         <div class="version">Version 1.0.0<br>© 2026 Soaltee Gategourmet</div>
       </aside>
@@ -491,6 +551,7 @@ function filterRows(value) {
 
 function renderKot() {
   const flight = selectedFlight();
+  const step = state.kotStep;
   const body = `
     <div class="flight-header">
       <div><button class="btn" onclick="setScreen('queue')">Back to Flight List</button></div>
@@ -501,78 +562,116 @@ function renderKot() {
       <div><label>Aircraft</label><b>${flight.aircraft}</b></div>
       <div><label>Reg. No.</label><b>${flight.reg}</b></div>
     </div>
-    <div class="steps">${["Flight Info", "Pax Load", "Meal Choices", "Special Meals", "Ancillaries", "Review & Summary"].map((item, index) => `<div class="step ${index === 0 ? "active" : ""}"><b>${index + 1}</b>${item}</div>`).join("")}</div>
+    <div class="steps">${KOT_STEPS.map((item, index) => `<button class="step ${index === step ? "active" : ""} ${index < step ? "complete" : ""}" onclick="setKotStep(${index})"><b>${index + 1}</b>${item}</button>`).join("")}</div>
     <section class="content">
       <div class="grid-2">
-        <div>
-          <div class="grid-main">
-            <div>
-              <div class="panel">
-                <h2>Flight Information</h2>
-                <div class="form-grid">
-                  ${formField("Date *", state.kot.date, "state.kot.date=this.value;saveState()")}
-                  ${formField("Flight No. *", flight.flightNo)}
-                  ${formField("Airline", flight.airline)}
-                  ${formField("Registration", flight.reg, "selectedFlight().reg=this.value;saveState()")}
-                  ${selectField("Aircraft Type *", flight.aircraft)}
-                  ${formField("Aircraft Configuration", flight.config, "selectedFlight().config=this.value;saveState()")}
-                  ${formField("Sector *", flight.sector, "selectedFlight().sector=this.value;saveState()")}
-                  ${selectField("Menu Cycle *", flight.menu)}
-                </div>
-                <div class="form-grid two" style="margin-top:14px">
-                  ${formField("Uplift: 1st Service", state.kot.firstUplift, "state.kot.firstUplift=this.value;saveState()")}
-                  ${formField("Uplift: 2nd Service", state.kot.secondUplift, "state.kot.secondUplift=this.value;saveState()")}
-                </div>
-              </div>
-              <div class="panel">
-                <h2>Passenger Load</h2>
-                ${editableLoadTable()}
-              </div>
-              <div class="panel">
-                <h2>Special Meals (If Any)</h2>
-                ${specialMealsTable(true)}
-                <label class="muted" style="display:block;margin-top:16px">Remarks / Instructions</label>
-                <textarea id="remarks" onchange="state.kot.remarks=this.value;saveState()">${state.kot.remarks}</textarea>
-              </div>
-            </div>
-            <div>
-              <div class="panel">
-                <div style="display:flex;justify-content:space-between;gap:12px;align-items:center"><h2>Meal Choices <span class="muted">(Two Services)</span></h2><button class="btn" onclick="copyFirstToSecond()">Copy 1st to 2nd</button></div>
-                ${mealTable("1st Service", state.kot.firstService, true, "firstService")}
-                ${mealTable("2nd Service", state.kot.secondService, true, "secondService")}
-              </div>
-              <div class="panel">
-                <div style="display:flex;justify-content:space-between;gap:12px;align-items:center"><h2>Ancillaries <span class="muted">(Auto Calculated)</span></h2><button class="btn green" onclick="calculateMeals()">Auto Calculate</button></div>
-                ${ancillaryTable(3)}
-                <button class="btn" onclick="openFlightModal()">View All Ancillaries</button>
-              </div>
-            </div>
-          </div>
-        </div>
+        <div>${kotStageContent(step, flight)}</div>
         <aside>
           ${sidePanel("Key Timings", [["Hot Meal Dish Out", "13:15"], ["Cold Meal Prep.", "13:00"], ["Dispatch Time", "14:45"]])}
           ${sidePanel("Other Info", [["Loading Bay", "02"], ["Gate Type", "Wide Body"], ["Uplift Type", "Full Uplift"], ["Prepared By", "operations1"], ["Prepared On", "15/06/2026 10:24"]])}
-          <div class="panel">
-            <h2>Quick Actions</h2>
+          ${step < 5 ? `<div class="panel">
+            <h2>Stage Actions</h2>
             <div class="actions-stack">
               <button class="btn navy" onclick="saveDraft()">Save Draft</button>
-              <button class="btn green" onclick="approveKot()">Calculate Meals</button>
-              <button class="btn blue" onclick="generateChallan()">Generate Gate Pass Cum Delivery Challan</button>
-              <button class="btn green" onclick="setScreen('challan-preview')">Preview Challan</button>
-              <button class="btn green" onclick="window.print()">Print Challan</button>
-              <button class="btn" onclick="sendToKitchen()">Send To Kitchen</button>
+              ${step === 4 ? `<button class="btn green" onclick="calculateMeals()">Approve Ancillaries</button>` : ""}
             </div>
-          </div>
+          </div>` : ""}
         </aside>
       </div>
-      <div class="footer-note">Note: Please verify all counts before generating Gate Pass Cum Delivery Challan.</div>
+      ${kotStageFooter(step)}
+      <div class="footer-note">Note: Complete each stage before generating Gate Pass Cum Delivery Challan.</div>
     </section>
   `;
   return layout("KOT Entry", "Kitchen Order Ticket", body);
 }
 
+function kotStageContent(step, flight) {
+  const stages = [
+    () => `
+      <div class="panel kot-stage">
+        <h2>Flight Information</h2>
+        <div class="notice compact-notice"><span class="check">✓</span><div><b>Loaded from flight schedule</b><br><span class="muted">Flight details are airline-fed operational data for this wireframe.</span></div></div>
+        <div class="form-grid">
+          ${readonlyField("Date", state.kot.date)}
+          ${readonlyField("Flight No.", flight.flightNo)}
+          ${readonlyField("Airline", flight.airline)}
+          ${readonlyField("Registration", flight.reg)}
+          ${readonlyField("Aircraft Type", flight.aircraft)}
+          ${readonlyField("Aircraft Configuration", flight.config)}
+          ${readonlyField("Sector", flight.sector)}
+          ${readonlyField("Menu Cycle", flight.menu)}
+        </div>
+        <div class="form-grid two" style="margin-top:14px">
+          ${readonlyField("Uplift: 1st Service", state.kot.firstUplift)}
+          ${readonlyField("Uplift: 2nd Service", state.kot.secondUplift)}
+        </div>
+      </div>
+    `,
+    () => `
+      <div class="panel kot-stage">
+        <h2>Passenger Load</h2>
+        ${editableLoadTable()}
+      </div>
+    `,
+    () => `
+      <div class="panel kot-stage">
+        <div class="panel-head"><h2>Meal Choices <span class="muted">(Loaded from Menu Loading Chart)</span></h2><button class="btn" onclick="setScreen('loading-preview')">Open Chart Preview</button></div>
+        <div class="notice compact-notice"><span class="check">✓</span><div><b>Standard meal matrix is airline-loaded</b><br><span class="muted">Only special meals are edited in KOT entry because operations has limited aircraft turn time.</span></div></div>
+        ${kotLoadedMealChoices(flight)}
+        <div class="panel-subsection">
+          <div class="panel-head"><h2>Special Meals</h2><span class="badge progress">User editable</span></div>
+          ${specialMealsTable(true)}
+        </div>
+      </div>
+    `,
+    () => `
+      <div class="panel kot-stage">
+        <h2>Special Meals</h2>
+        ${specialMealsTable(true)}
+        <label class="muted" style="display:block;margin-top:16px">Remarks / Instructions</label>
+        <textarea id="remarks" onchange="state.kot.remarks=this.value;saveState()">${state.kot.remarks}</textarea>
+      </div>
+    `,
+    () => `
+      <div class="panel kot-stage">
+        <div class="panel-head"><h2>Ancillaries Review & Approval</h2><button class="btn green" onclick="calculateMeals()">Auto Calculate</button></div>
+        ${ancillaryTable()}
+        <div class="notice" style="margin-top:14px"><span class="check">✓</span><div><b>Review generated ancillary counts</b><br><span class="muted">Approve this stage after validating first and second service quantities.</span></div></div>
+      </div>
+    `,
+    () => `
+      <div class="panel kot-stage">
+        <h2>Final Review & Summary</h2>
+        <div class="chart-header">
+          ${[["Flight", flight.flightNo], ["Airline", flight.airline], ["Sector", flight.sector], ["Aircraft", flight.aircraft], ["Pax Total", flight.j + flight.y + flight.tc + flight.cc], ["1st Service Meals", state.kot.firstService.reduce((sum, row) => sum + total(row), 0)], ["2nd Service Meals", state.kot.secondService.reduce((sum, row) => sum + total(row), 0)], ["Special Meals", Object.values(state.kot.specialMeals).reduce((sum, value) => sum + value, 0)], ["KOT Status", badge(flight.kot)], ["Production", badge(flight.production)]].map(([label, value]) => `<div class="mini-card"><span class="muted">${label}</span><br><b>${value}</b></div>`).join("")}
+        </div>
+        <div class="paper-grid equal" style="margin-top:14px">
+          ${loadTableReadOnly()}
+          ${specialMealsTable()}
+        </div>
+        <div style="margin-top:14px">${ancillaryTable(8)}</div>
+      </div>
+    `
+  ];
+  return stages[step]();
+}
+
+function kotStageFooter(step) {
+  return `
+    <div class="stage-footer">
+      <button class="btn" onclick="setKotStep(${step - 1})" ${step === 0 ? "disabled" : ""}>Previous</button>
+      <span class="muted">Stage ${step + 1} of ${KOT_STEPS.length}: ${KOT_STEPS[step]}</span>
+      ${step < KOT_STEPS.length - 1 ? `<button class="btn green" onclick="setKotStep(${step + 1})">Next Stage</button>` : `<button class="btn blue" onclick="generateChallan()">Generate Challan</button>`}
+    </div>
+  `;
+}
+
 function formField(label, value, changeHandler = "") {
   return `<label><span class="muted">${label}</span><input class="input" value="${escapeHtml(value)}" ${changeHandler ? `onchange="${changeHandler}"` : ""}></label>`;
+}
+
+function readonlyField(label, value) {
+  return `<label><span class="muted">${label}</span><input class="input readonly-input" value="${escapeHtml(value)}" readonly></label>`;
 }
 
 function selectField(label, value) {
@@ -583,7 +682,7 @@ function selectField(label, value) {
 
 function editableLoadTable() {
   return `
-    <table class="compact-table">
+    <table class="compact-table load-table">
       <thead><tr><th>Pax on Board</th><th class="num">BCL</th><th class="num">PYCL</th><th class="num">EYCL</th><th class="num">C/C (TC)</th><th class="num">C/A (CC)</th><th class="num">Total</th></tr></thead>
       <tbody>
         ${state.kot.loads.map((row, r) => `<tr><td>${row[0]}${r === 2 || r === 3 ? " *" : ""}</td>${row.slice(1).map((value, c) => `<td class="num"><input class="mini-input" value="${value}" onchange="state.kot.loads[${r}][${c + 1}]=Number(this.value)||0;saveState();render()"></td>`).join("")}<td class="num"><strong>${total(row)}</strong></td></tr>`).join("")}
@@ -596,7 +695,7 @@ function mealTable(title, rows, editable = false, key = "") {
   return `
     <div style="margin-bottom:14px">
       <div class="badge ${title.includes("1st") ? "confirmed" : "progress"}" style="margin-bottom:8px">${title}</div>
-      <table class="compact-table">
+      <table class="compact-table meal-table">
         <thead><tr><th>Food</th><th class="num">BCL</th><th class="num">PYCL</th><th class="num">EYCL</th><th class="num">C/C (TC)</th><th class="num">C/A (CC)</th><th class="num">Total</th></tr></thead>
         <tbody>
           ${rows.map((row, r) => `<tr><td>${row[0]}</td>${row.slice(1).map((value, c) => `<td class="num">${editable ? `<input class="mini-input" value="${value}" onchange="state.kot.${key}[${r}][${c + 1}]=Number(this.value)||0;saveState();render()">` : value}</td>`).join("")}<td class="num"><strong>${total(row)}</strong></td></tr>`).join("")}
@@ -611,7 +710,7 @@ function specialMealsTable(editable = false) {
   const keys = Object.keys(state.kot.specialMeals);
   const values = Object.values(state.kot.specialMeals);
   return `
-    <table class="compact-table">
+    <table class="compact-table special-meals-table">
       <thead><tr>${keys.map((key) => `<th class="num">${key}</th>`).join("")}<th class="num">Total</th></tr></thead>
       <tbody><tr>${keys.map((key) => `<td class="num">${editable ? `<input class="mini-input" value="${state.kot.specialMeals[key]}" onchange="state.kot.specialMeals.${key}=Number(this.value)||0;saveState();render()">` : state.kot.specialMeals[key]}</td>`).join("")}<td class="num">${values.reduce((a, b) => a + b, 0)}</td></tr></tbody>
     </table>
@@ -621,10 +720,64 @@ function specialMealsTable(editable = false) {
 function ancillaryTable(limit = state.kot.ancillaries.length) {
   const rows = state.kot.ancillaries.slice(0, limit);
   return `
-    <table class="compact-table">
+    <table class="compact-table ancillary-table">
       <thead><tr><th>Item</th><th>Unit</th><th class="num">1st Service</th><th class="num">2nd Service</th><th class="num">Total</th></tr></thead>
       <tbody>${rows.map((row) => `<tr><td>${row[0]}</td><td>${row[1]}</td><td class="num">${row[2]}</td><td class="num">${row[3]}</td><td class="num">${row[2] + row[3]}</td></tr>`).join("")}</tbody>
     </table>
+  `;
+}
+
+function chartTotalPax(capacity = state.loadingChart.capacity) {
+  return Number(capacity.total) || Number(capacity.j) + Number(capacity.w) + Number(capacity.y) + Number(capacity.crew);
+}
+
+function chartPassengerPax(capacity = state.loadingChart.capacity) {
+  return chartTotalPax(capacity);
+}
+
+function calculateLoadingQty(row, pax, capacity = state.loadingChart.capacity) {
+  if (row.ratioValue === "JH150") return Math.max(1, Math.ceil(pax / 25));
+  if (row.ratioType.startsWith("J")) return Number(capacity.j || 0);
+  if (row.ratioType.startsWith("W")) return Number(capacity.w || 0);
+  if (row.ratioType.startsWith("Y")) return Number(capacity.y || 0);
+  if (row.ratioType.startsWith("Crew")) return Number(capacity.crew || 0);
+  return pax;
+}
+
+function totalLoadingQuantity() {
+  const pax = chartPassengerPax();
+  return state.loadingChart.rows.reduce((sum, row) => sum + calculateLoadingQty(row, pax), 0);
+}
+
+function chartHeaderCards() {
+  const chart = state.loadingChart;
+  return [
+    ["Airline", chart.airline],
+    ["Aircraft Type", chart.aircraftType],
+    ["Chart Code", chart.chartCode],
+    ["Effective From", chart.effectiveFrom],
+    ["Flight No.", chart.flightNo],
+    ["Meal Type", chart.mealType],
+    ["Version", chart.version],
+    ["Effective To", chart.effectiveTo],
+    ["Sector", chart.sector],
+    ["Meal Time", chart.mealTime]
+  ];
+}
+
+function kotLoadedMealChoices(flight) {
+  const rows = state.loadingChart.rows;
+  const passengerPax = flight.j + flight.y;
+  return `
+    <div class="table-wrap">
+      <table class="compact-table kot-loaded-table">
+        <thead><tr><th>Dish Code</th><th>Dish Name</th><th>Unit</th><th>Ratio Source</th><th class="num">J</th><th class="num">Y</th><th class="num">Crew</th><th class="num">Loaded Qty</th></tr></thead>
+        <tbody>${rows.map((row) => {
+          const loadedQty = calculateLoadingQty(row, passengerPax, { j: flight.j, w: 0, y: flight.y, crew: flight.tc + flight.cc });
+          return `<tr><td>${row.code}</td><td>${row.name}</td><td>${row.unit}</td><td>${row.ratioValue}<br><span class="muted">${row.ratioType}</span></td><td class="num">${flight.j}</td><td class="num">${flight.y}</td><td class="num">${flight.tc + flight.cc}</td><td class="num"><strong>${loadedQty}</strong></td></tr>`;
+        }).join("")}</tbody>
+      </table>
+    </div>
   `;
 }
 
@@ -651,45 +804,149 @@ function renderKotList() {
 }
 
 function renderKitchen() {
+  const rows = kitchenScheduleRows();
+  const highLoadCount = rows.filter(({ flight }) => flight.j + flight.y + flight.tc + flight.cc >= 220).length;
   const body = `
     <section class="content">
       <div class="toolbar">
-        <input class="search" placeholder="Search kitchen tickets..." oninput="filterTickets(this.value)">
-        <button class="btn" onclick="render()">Refresh Board</button>
-        <button class="btn green" onclick="approveKot()">Approve Current KOT</button>
-        <button class="btn" onclick="openDisplayWindow('kitchen')">Open Display Window</button>
+        <button class="btn" onclick="setScreen('queue')">Back to Flight Queue</button>
+        <span style="flex:1"></span>
+        <button class="btn green" onclick="openDisplayWindow('kitchen')">Open Kitchen Display Window</button>
       </div>
-      <div class="kitchen-board" id="ticket-board">
-        ${state.flights.slice(0, 6).map(kitchenTicket).join("")}
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Production Kitchen Display</h2>
+          <span class="badge ${highLoadCount ? "pending" : "confirmed"}">${highLoadCount ? `${highLoadCount} high load alert` : "All loads normal"}</span>
+        </div>
+        <div class="notice compact-notice"><span class="check">✓</span><div><b>Separate production board</b><br><span class="muted">Open the display in a separate window so the operations app remains navigatable.</span></div></div>
+        <div class="kitchen-launch-grid">
+          ${kpi("FL", "Upcoming Flights", String(rows.length), "Kitchen display")}
+          ${kpi("PX", "Total Pax", "2,456", "Today", "green")}
+          ${kpi("ML", "Total Meals", "2,812", "Today", "amber")}
+          ${kpi("AL", "High Load Alerts", String(highLoadCount), "Flashes red on display", highLoadCount ? "red" : "green")}
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>STD</th><th>Flight No.</th><th>Airline</th><th>Sector</th><th class="num">Total Pax</th><th>Dispatch</th><th>Status</th></tr></thead>
+          <tbody>${rows.map(({ flight, plan }) => {
+            const totalPax = flight.j + flight.y + flight.tc + flight.cc;
+            return `<tr><td class="blue-text">${flight.std}</td><td><strong>${flight.flightNo}</strong></td><td>${flight.airline}</td><td>${flight.sector}</td><td class="num"><strong>${totalPax}</strong></td><td>${plan[8]}</td><td>${badge(plan[9])}</td></tr>`;
+          }).join("")}</tbody>
+        </table>
       </div>
     </section>
   `;
-  return layout("Kitchen Production Board", "Live KOT display for meal preparation", body);
+  return layout("Kitchen Board", "Launch separate production display", body);
 }
 
 function renderKitchenDisplay() {
-  const activeFlights = state.flights.filter((flight) => flight.production !== "dispatched").slice(0, 9);
-  const body = `
-    <main class="display-screen">
-      <header class="display-header">
-        <div>
-          <div class="display-kicker">Soaltee Gategourmet</div>
-          <h1>Kitchen Production Display</h1>
+  return kitchenBoardScreen();
+}
+
+function kitchenBoardScreen() {
+  const rows = kitchenScheduleRows();
+  return `
+    <main class="kitchen-display-board">
+      <header class="kitchen-display-head">
+        <div class="kitchen-display-brand">
+          <img class="kitchen-soaltee-logo" src="659d29fe3627d_1704798718.png" alt="The Soaltee">
+          <span></span>
+          <img class="kitchen-gate-logo" src="gate-gourmet-logo-vector.svg" alt="Gategourmet">
         </div>
-          <div class="display-clock">15 Jun 2026 · 10:24 AM</div>
+        <div>
+          <h1>Production Kitchen - Upcoming Flights</h1>
+        </div>
+        <div class="kitchen-display-time">
+          <b>15 Jun 2026</b><span>| Mon</span><strong>10:24 AM</strong><small><i></i> Live</small>
+        </div>
       </header>
-      <section class="display-summary">
-        <div><b>${activeFlights.length}</b><span>Active KOT</span></div>
-        <div><b>${activeFlights.filter((flight) => flight.production === "pending").length}</b><span>To Prepare</span></div>
-        <div><b>${activeFlights.filter((flight) => flight.production === "in progress").length}</b><span>In Progress</span></div>
-        <div><b>${activeFlights.filter((flight) => flight.production === "prepared" || flight.production === "approved").length}</b><span>Ready / Approved</span></div>
+      <section class="kitchen-kpis">
+        ${kitchenKpi("FL", "Total Flights", "18", "", "blue")}
+        ${kitchenKpi("PX", "Total Pax", "2,456", "", "green")}
+        ${kitchenKpi("ML", "Total Meals", "2,812", "", "amber")}
+        ${kitchenKpi("CR", "Total Crew", "192", "(TC + CC)", "purple")}
+        ${kitchenKpi("ND", "Next Dispatch", "00:45", "FZ 540", "cyan")}
+        ${kitchenKpi("OT", "On Time", "16", "", "cyan")}
+        ${kitchenKpi("DL", "Delayed", "2", "", "red")}
       </section>
-      <section class="display-work-grid">
-        ${activeFlights.map(displayTicket).join("") || `<div class="display-empty">No active tickets</div>`}
+      <section class="kitchen-board-table-wrap">
+        <table class="kitchen-board-table">
+          <colgroup>
+            <col class="col-std"><col class="col-flight"><col class="col-airline"><col class="col-sector">
+            <col class="col-small"><col class="col-small"><col class="col-small"><col class="col-small"><col class="col-total">
+            <col class="col-meal"><col class="col-qty"><col class="col-meal"><col class="col-qty"><col class="col-crew"><col class="col-qty">
+            <col class="col-time"><col class="col-time"><col class="col-time"><col class="col-status">
+          </colgroup>
+          <thead>
+            <tr>
+              <th rowspan="2">STD</th><th rowspan="2">Flight No</th><th rowspan="2">Airline</th><th rowspan="2">Sector</th>
+              <th colspan="5">Passengers</th><th colspan="6">Meal Codes & Meals Count</th>
+              <th>Hot Meal</th><th>Cold Meal</th><th>Dispatch</th><th rowspan="2">Status</th>
+            </tr>
+            <tr>
+              <th>J</th><th>Y</th><th>TC</th><th>CC</th><th>Total</th>
+              <th>J Meal Code</th><th>Qty</th><th>Y Meal Code</th><th>Qty</th><th>Crew Meal</th><th>Qty</th>
+              <th>Dish Out</th><th>Prep. Time</th><th>Time</th>
+            </tr>
+          </thead>
+          <tbody>${rows.map(kitchenBoardRow).join("")}</tbody>
+        </table>
       </section>
+      <footer class="kitchen-display-foot">
+        <div><b>Notes:</b><span>All times are as per local time (KTM)</span><span>Refer KOT for any changes</span><span>Thank You!</span></div>
+        <div><b>Last Updated:</b><span>10:24 AM</span></div>
+      </footer>
     </main>
   `;
-  return body;
+}
+
+function kitchenScheduleRows() {
+  const mealPlan = {
+    FZ576: ["JM102", "Chicken Biryani", "YM205", "Chicken Rice", "CREW", 10, "13:15", "13:00", "14:45", "on time"],
+    QR647: ["JM103", "Grilled Chicken", "YM210", "Beef Stew", "CREW", 12, "15:30", "14:30", "16:30", "on time"],
+    SG052: ["-", "", "YM301", "Chicken Sandwich", "CREW", 8, "16:10", "16:00", "17:00", "confirmed"],
+    AI213: ["JM104", "Lamb Biryani", "YM212", "Butter Chicken", "CREW", 10, "17:45", "17:15", "18:30", "scheduled"],
+    FZ540: ["JM102", "Chicken Biryani", "YM205", "Chicken Rice", "CREW", 10, "19:15", "19:00", "20:30", "in progress"],
+    RA402: ["JM105", "Beef Stroganoff", "YM220", "Chicken Pasta", "CREW", 8, "20:00", "19:45", "21:15", "scheduled"],
+    "6E114": ["-", "", "YM310", "Chicken Wrap", "CREW", 8, "21:30", "21:15", "22:30", "scheduled"],
+    TK726: ["JM106", "Grilled Fish", "YM222", "Beef Stew", "CREW", 12, "23:15", "23:00", "00:15", "scheduled"]
+  };
+  return state.flights.slice(0, 8).map((flight) => {
+    const plan = mealPlan[flight.flightNo] || ["JM102", "Chicken Biryani", "YM205", "Chicken Rice", "CREW", flight.tc + flight.cc, "13:15", "13:00", "14:45", flight.production];
+    return { flight, plan };
+  });
+}
+
+function kitchenKpi(icon, label, value, sub, tone) {
+  return `<div class="kitchen-kpi ${tone}"><span>${icon}</span><div><small>${label}</small><b>${value}</b>${sub ? `<em>${sub}</em>` : ""}</div></div>`;
+}
+
+function kitchenBoardRow({ flight, plan }) {
+  const totalPax = flight.j + flight.y + flight.tc + flight.cc;
+  const isHighLoad = totalPax >= 220;
+  const [jCode, jMeal, yCode, yMeal, crewCode, crewQty, hotMeal, coldMeal, dispatch, status] = plan;
+  return `
+    <tr class="${isHighLoad ? "high-load-flight" : ""}">
+      <td class="kitchen-std">${flight.std}</td>
+      <td class="kitchen-flight-no">${flight.flightNo.replace(/([A-Z]+)(\\d+)/, "$1 $2")}</td>
+      <td><span class="kitchen-airline ${flight.airlineClass}">${flight.airline}</span></td>
+      <td>${flight.sector}</td>
+      <td>${flight.j}</td><td>${flight.y}</td><td>${flight.tc}</td><td>${flight.cc}</td>
+      <td class="kitchen-total-pax">${totalPax}</td>
+      <td>${mealCodeBlock(jCode, jMeal)}</td><td>${jCode === "-" ? "-" : flight.j}</td>
+      <td>${mealCodeBlock(yCode, yMeal)}</td><td>${flight.y}</td>
+      <td>${mealCodeBlock(crewCode, "Crew Meal")}</td><td>${crewQty}</td>
+      <td class="kitchen-time-cell">${hotMeal}</td>
+      <td class="kitchen-time-cell">${coldMeal}</td>
+      <td class="kitchen-time-cell">${dispatch}</td>
+      <td><span class="kitchen-status ${String(status).replace(/\s+/g, "-")}">${status}</span></td>
+    </tr>
+  `;
+}
+
+function mealCodeBlock(code, name) {
+  return `<div class="meal-code">${code}<small>${name || "&nbsp;"}</small></div>`;
 }
 
 function displayTicket(flight) {
@@ -772,13 +1029,13 @@ function challanPaper(full = false) {
         <div class="paper-title">GATE PASS CUM DELIVERY CHALLAN<br>FOR MEAL ON BOARD</div>
         <div class="serial">S. No.: <strong>${state.kot.challanNo}</strong><div class="barcode"></div><div>Date: ${state.kot.date}</div></div>
       </div>
-      <div class="paper-grid">
+      <div class="paper-grid challan-flight-grid">
         <table class="compact-table"><tbody>
           ${[["Flight No.", flight.flightNo], ["Registration", flight.reg], ["A/C Type", flight.aircraft], ["A/C Configuration", flight.config], ["Sector", flight.sector], ["Cycle", flight.menu], ["1st Service Uplift", state.kot.firstUplift], ["2nd Service Uplift", state.kot.secondUplift]].map(infoRow).join("")}
         </tbody></table>
         ${loadTableReadOnly()}
       </div>
-      <div class="paper-grid equal">
+      <div class="paper-grid equal challan-meal-grid">
         ${mealTable("1st Service", state.kot.firstService)}
         ${mealTable("2nd Service", state.kot.secondService)}
       </div>
@@ -803,7 +1060,7 @@ function infoRow([label, value]) {
 
 function loadTableReadOnly() {
   return `
-    <table class="compact-table">
+    <table class="compact-table load-table">
       <thead><tr><th colspan="6" class="num">Pax on Board</th></tr><tr><th></th><th>BCL</th><th>PYCL</th><th>EYCL</th><th>C/C (TC)</th><th>C/A (CC)</th></tr></thead>
       <tbody>${state.kot.loads.map((row) => `<tr><td>${row[0]}</td>${row.slice(1).map((value) => `<td class="num">${value}</td>`).join("")}</tr>`).join("")}</tbody>
     </table>
@@ -908,57 +1165,61 @@ function invoiceTable(items) {
 }
 
 function renderLoadingMaintenance() {
+  const chart = state.loadingChart;
   const body = `
     <section class="content">
-      <div class="toolbar"><button class="btn" onclick="setScreen('queue')">Back to Meal Loading Chart List</button><span style="flex:1"></span><button class="btn" onclick="setScreen('loading-preview')">Preview Loading Matrix</button><button class="btn">Print Loading Chart</button><button class="btn green">Save</button><button class="btn">Cancel</button></div>
-      <div class="panel"><h2>Chart Header</h2><div class="chart-header">${["Airline *|FlyDubai", "Aircraft Type|B737-800", "Day of Ops|1 2 3 4 5 6 7", "Effective From|15/06/2026", "Flight No. *|FZ576", "Meal Time *|05:10", "Chart Code *|MLC-FZ576-15062026-03", "Effective To *|24/08/2026", "Sector *|KTM - DXB", "Meal Type *|Hot Breakfast", "Version *|3", "Notes|FlyDubai Hot Breakfast MLC"].map((item) => {
-        const [label, value] = item.split("|");
-        return label === "Day of Ops" ? `<label><span class="muted">${label}</span><div class="day-pills"><b>1</b><span>2</span><span>3</span><span>4</span><span>5</span><span>6</span><span>7</span></div></label>` : formField(label, value);
-      }).join("")}</div></div>
+      <div class="toolbar"><button class="btn" onclick="setScreen('queue')">Back to Meal Loading Chart List</button><span style="flex:1"></span><button class="btn" onclick="setScreen('loading-preview')">Preview Loading Matrix</button><button class="btn" onclick="window.print()">Print Loading Chart</button><button class="btn green" onclick="saveState();showToast('Meal loading chart saved locally.')">Save</button><button class="btn" onclick="setScreen('queue')">Cancel</button></div>
+      <div class="panel"><h2>Chart Header</h2><div class="chart-header">
+        ${formField("Airline *", chart.airline, "state.loadingChart.airline=this.value;saveState()")}
+        ${formField("Aircraft Type", chart.aircraftType, "state.loadingChart.aircraftType=this.value;saveState()")}
+        <label><span class="muted">Day of Ops</span><div class="day-pills"><b>1</b><span>2</span><span>3</span><span>4</span><span>5</span><span>6</span><span>7</span></div></label>
+        ${formField("Effective From", chart.effectiveFrom, "state.loadingChart.effectiveFrom=this.value;saveState()")}
+        ${formField("Flight No. *", chart.flightNo, "state.loadingChart.flightNo=this.value;saveState()")}
+        ${formField("Meal Time *", chart.mealTime, "state.loadingChart.mealTime=this.value;saveState()")}
+        ${formField("Chart Code *", chart.chartCode, "state.loadingChart.chartCode=this.value;saveState()")}
+        ${formField("Effective To *", chart.effectiveTo, "state.loadingChart.effectiveTo=this.value;saveState()")}
+        ${formField("Sector *", chart.sector, "state.loadingChart.sector=this.value;saveState()")}
+        ${formField("Meal Type *", chart.mealType, "state.loadingChart.mealType=this.value;saveState()")}
+        ${formField("Version *", chart.version, "state.loadingChart.version=this.value;saveState()")}
+        ${formField("Rotation Effective From", chart.rotationFrom, "state.loadingChart.rotationFrom=this.value;saveState()")}
+        ${formField("Rotation Effective To", chart.rotationTo, "state.loadingChart.rotationTo=this.value;saveState()")}
+        <label><span class="muted">Notes</span><textarea onchange="state.loadingChart.notes=this.value;saveState()">${escapeHtml(chart.notes)}</textarea></label>
+      </div></div>
       <div class="panel"><div style="display:flex;justify-content:space-between;align-items:center"><h2>Meal Loading Ratio Details</h2><div><button class="btn">Add Row</button> <button class="btn danger">Delete Row</button> <button class="btn">Import from Template</button></div></div>${ratioTable()}</div>
       <div class="paper-grid">
         <div class="panel"><h2>Ratio Type Guide</h2><p><b>1 : 1 (Per Pax)</b> = Item quantity increases one by one with each passenger.</p><p><b>J (Business)</b> = Quantity based on Business Class ratio.</p><p><b>W / Y</b> = Quantity based on cabin class ratio.</p></div>
-        ${sidePanel("Summary", [["Total Items", "10"], ["Service", "1"], ["Meal Time", "Hot Breakfast"], ["Aircraft Capacity", "189"], ["Chart Status", badge("confirmed")]])}
+        ${sidePanel("Summary", [["Total Items", chart.rows.length], ["Service", "1"], ["Meal Time", chart.mealType], ["Aircraft Capacity", chartTotalPax()], ["Chart Status", badge("confirmed")]])}
       </div>
     </section>`;
   return layout("Meal Loading Chart Maintenance", "Create & maintain meal loading chart ratios", body);
 }
 
 function loadingRows() {
-  return [
-    ["DS 010187", "SEASONAL FRUIT CUT CUBE BOWL 120GM", "Bowl", "1 : 1 (Per Pax)", "1:1"],
-    ["DS 010528", "MIX YOGHURT GRANOLA APPLE", "Cup", "1 : 1 (Per Pax)", "1:1"],
-    ["DS 010523", "MUSHROOM AND CHEESE OMELETTE KTM", "Pcs", "J (Business)", "JH150"],
-    ["DS 010150", "POTATOES KTM", "Pcs", "J (Business)", "JH150"],
-    ["DS 010186", "VERMICELLI UTTAPAM KTM", "Pcs", "J (Business)", "JH150"],
-    ["DS 010122", "CROISSANT 30 GM", "Pcs", "1 : 1 (Per Pax)", "1:1"],
-    ["DS 010123", "SOFT ROLL 35 GM", "Pcs", "1 : 1 (Per Pax)", "1:1"],
-    ["DS 010261", "BUTTER PORTION JC", "Pcs", "1 : 1 (Per Pax)", "1:1"],
-    ["DS 010351", "JAM PORTION JC", "Pcs", "1 : 1 (Per Pax)", "1:1"],
-    ["TS 090002", "JC TSU", "Set", "1 : 1 (Per Pax)", "1:1"]
-  ];
+  return state.loadingChart.rows;
 }
 
 function ratioTable() {
-  return `<table><thead><tr><th>Seq. No.</th><th>Service Seq.</th><th>Service Type</th><th>Dish Code</th><th>Dish Name</th><th>Unit</th><th>Ratio Type</th><th>Ratio Value</th><th>Min Pax</th><th>Max Pax</th><th>Remarks</th><th>Actions</th></tr></thead><tbody>${loadingRows().map((row, i) => `<tr><td>${i + 1}</td><td>1</td><td>Hot Breakfast</td><td>${row[0]}</td><td>${row[1]}</td><td>${row[2]}</td><td><select class="select"><option>${row[3]}</option></select></td><td><input class="input" value="${row[4]}"></td><td>1</td><td>9999</td><td>${row[4] === "JH150" ? "JH150 = 6 Pcs" : "Per Pax"}</td><td><button class="btn">Edit</button></td></tr>`).join("")}</tbody></table>`;
+  const ratioTypes = ["1 : 1 (Per Pax)", "J (Business)", "W (Premium Economy)", "Y (Economy)", "Crew"];
+  return `<div class="table-wrap"><table><thead><tr><th>Seq. No.</th><th>Service Seq.</th><th>Service Type</th><th>Dish Code</th><th>Dish Name</th><th>Unit</th><th>Ratio Type</th><th>Ratio Value</th><th>Min Pax</th><th>Max Pax</th><th>Remarks</th><th>Actions</th></tr></thead><tbody>${loadingRows().map((row, i) => `<tr><td>${i + 1}</td><td>1</td><td>${state.loadingChart.mealType}</td><td><input class="input cell-input" value="${escapeHtml(row.code)}" onchange="updateLoadingRow(${i}, 'code', this.value)"></td><td><input class="input cell-input dish-input" value="${escapeHtml(row.name)}" onchange="updateLoadingRow(${i}, 'name', this.value)"></td><td><input class="input cell-input" value="${escapeHtml(row.unit)}" onchange="updateLoadingRow(${i}, 'unit', this.value)"></td><td><select class="select cell-input" onchange="updateLoadingRow(${i}, 'ratioType', this.value)">${ratioTypes.map((type) => `<option ${type === row.ratioType ? "selected" : ""}>${type}</option>`).join("")}</select></td><td><input class="input cell-input" value="${escapeHtml(row.ratioValue)}" onchange="updateLoadingRow(${i}, 'ratioValue', this.value)"></td><td>1</td><td>9999</td><td>${escapeHtml(row.remarks)}</td><td><button class="btn icon-btn" title="Edit row">ED</button></td></tr>`).join("")}</tbody></table></div>`;
 }
 
 function renderLoadingPreview() {
   const points = [1, 2, 3, 4, 5, 10, 20, 30, 50, 100, 150, 180, 189];
+  const chart = state.loadingChart;
   const body = `
     <section class="content">
-      <div class="toolbar"><button class="btn" onclick="setScreen('loading-maintenance')">Back to Meal Loading Chart</button><span style="flex:1"></span><button class="btn">Download PDF</button><button class="btn">Print Chart</button><button class="btn">Export to Excel</button></div>
-      <div class="panel"><div class="chart-header">${[["Airline", "FlyDubai"], ["Aircraft Type", "B737-800"], ["Chart Code", "MLC-FZ576-15062026-03"], ["Effective From", "15/06/2026"], ["Flight No.", "FZ576"], ["Meal Type", "Hot Breakfast"], ["Version", "3"], ["Effective To", "24/08/2026"], ["Sector", "KTM - DXB"], ["Meal Time", "05:10"]].map(([a,b]) => `<div class="info-row"><span>${a}</span><b>${b}</b></div>`).join("")}</div></div>
-      <div class="panel"><div class="tabs"><button class="active">All Classes</button><button>Business (J)</button><button>Premium Economy (W)</button><button>Economy (Y)</button><button>Crew</button></div><div class="info-row"><span>Aircraft Capacity (Total Pax)</span><b>189</b></div></div>
+      <div class="toolbar"><button class="btn" onclick="setScreen('loading-maintenance')">Back to Meal Loading Chart</button><span style="flex:1"></span><button class="btn" onclick="downloadDemoDocument('loading-chart')">Download PDF</button><button class="btn" onclick="window.print()">Print Chart</button><button class="btn">Export to Excel</button></div>
+      <div class="panel"><div class="chart-header">${chartHeaderCards().map(([a,b]) => `<div class="info-row"><span>${a}</span><b>${b}</b></div>`).join("")}</div></div>
+      <div class="panel chart-capacity-panel"><div><div class="tabs"><button class="active">All Classes</button><button>Business (J)</button><button>Premium Economy (W)</button><button>Economy (Y)</button><button>Crew</button></div></div><div class="capacity-cards"><div><span>Aircraft Capacity</span><b>${chartTotalPax()}</b></div><div><span>Business (J)</span><b>${chart.capacity.j}</b></div><div><span>Premium Economy (W)</span><b>${chart.capacity.w}</b></div><div><span>Economy (Y)</span><b>${chart.capacity.y}</b></div><div><span>Crew</span><b>${chart.capacity.crew}</b></div></div></div>
       <div class="matrix-page">
-        <div class="panel"><h2>Loading Matrix (Quantity Per Pax)</h2><div class="table-wrap"><table><thead><tr><th>Dish Code</th><th>Dish Name</th><th>Unit</th><th>Ratio Type / Value</th>${points.map((p) => `<th class="num">${p}</th>`).join("")}</tr></thead><tbody>${loadingRows().map((row) => `<tr><td>${row[0]}</td><td>${row[1]}</td><td>${row[2]}</td><td>${row[4]}<br><span class="muted">${row[3]}</span></td>${points.map((p) => `<td class="num">${row[4] === "JH150" ? Math.max(1, Math.ceil(p / 25)) : p}</td>`).join("")}</tr>`).join("")}</tbody></table></div></div>
+        <div class="panel"><h2>Loading Matrix (Quantity Per Pax)</h2><div class="table-wrap"><table><thead><tr><th>Dish Code</th><th>Dish Name</th><th>Unit</th><th>Ratio Type / Value</th>${points.map((p) => `<th class="num">${p}</th>`).join("")}</tr></thead><tbody>${loadingRows().map((row) => `<tr><td>${row.code}</td><td>${row.name}</td><td>${row.unit}</td><td>${row.ratioValue}<br><span class="muted">${row.ratioType}</span></td>${points.map((p) => `<td class="num">${calculateLoadingQty(row, p)}</td>`).join("")}</tr>`).join("")}</tbody></table></div></div>
         <aside>
           <div class="panel"><h2>Filter & View Options</h2><label><input type="radio" checked> All Pax (1 to Capacity)</label><br><label><input type="radio"> Selected Range</label><br><label><input type="radio"> Key Pax Points</label><hr>${points.slice(0, 10).map((p) => `<label style="display:inline-block;width:70px"><input type="checkbox" checked> ${p}</label>`).join("")}<hr><label><input type="checkbox" checked> Passenger Items</label><br><label><input type="checkbox" checked> Crew Items</label></div>
           <div class="panel"><h2>Actions</h2><div class="actions-stack"><button class="btn">Print Loading Chart (Full)</button><button class="btn">Download PDF</button><button class="btn" onclick="setScreen('loading-maintenance')">Close</button></div></div>
         </aside>
       </div>
       <div class="paper-grid three">
-        ${sidePanel("Matrix Summary", [["Total Items", "10"], ["Total Pax", "189"], ["Meal Type", "Hot Breakfast"], ["Total Qty", "1,016"]])}
+        ${sidePanel("Matrix Summary", [["Total Items", chart.rows.length], ["Total Pax", chartTotalPax()], ["Meal Type", chart.mealType], ["Total Qty", totalLoadingQuantity().toLocaleString()]])}
         <div class="panel"><h2>Notes</h2><p>Quantities are calculated based on the defined ratio type and aircraft cabin capacity.</p><p>J = Business Class, W = Premium Economy Pax, Y = Economy Pax.</p></div>
         <div class="panel"><h2>Legend</h2><p>1 : 1 = item quantity increases with each passenger.</p><p>JH150 = business class tier ratio.</p></div>
       </div>

@@ -969,6 +969,15 @@ label .muted {
   color: #334155;
 }
 
+.warning-line {
+  color: var(--amber);
+}
+
+.warning-line .check {
+  color: var(--amber);
+  background: var(--amber-soft);
+}
+
 .check {
   width: 18px;
   height: 18px;
@@ -1018,6 +1027,120 @@ label .muted {
   border-top: 1px solid var(--line);
 }
 
+.planning-document {
+  margin-bottom: 18px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: var(--shadow);
+}
+
+.planning-doc-top {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: start;
+  padding-bottom: 14px;
+  border-bottom: 2px solid #d7dde6;
+}
+
+.planning-doc-top h2 {
+  margin: 0 0 8px;
+  font-size: 22px;
+}
+
+.planning-doc-top p {
+  margin: 0;
+  color: #334155;
+  line-height: 1.7;
+  font-size: 13px;
+}
+
+.planning-airline-mark {
+  color: #e98235;
+  font-size: 30px;
+  font-weight: 800;
+  text-transform: lowercase;
+}
+
+.planning-section-title {
+  margin: 14px 0 10px;
+  color: #1e293b;
+  font-size: 13px;
+  font-weight: 850;
+}
+
+.planning-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(130px, 1fr));
+  border-top: 1px solid var(--line);
+  border-left: 1px solid var(--line);
+}
+
+.planning-meta-grid div,
+.planning-meal-code div {
+  min-height: 58px;
+  padding: 9px 10px;
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  background: #fbfcfe;
+}
+
+.planning-meta-grid span,
+.planning-meal-code span {
+  display: block;
+  margin-bottom: 5px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.planning-meta-grid strong,
+.planning-meal-code b {
+  color: #172033;
+  font-size: 13px;
+}
+
+.planning-meal-code {
+  display: grid;
+  grid-template-columns: 170px minmax(0, 1fr) 220px;
+  margin-top: 14px;
+  border-top: 1px solid var(--line);
+  border-left: 1px solid var(--line);
+}
+
+.planning-matrix-wrap {
+  margin-top: 14px;
+  box-shadow: none;
+}
+
+.planning-matrix th,
+.planning-matrix td {
+  padding: 8px 9px;
+  font-size: 11px;
+}
+
+.planning-matrix th:first-child,
+.planning-matrix td:first-child {
+  min-width: 112px;
+}
+
+.planning-matrix th:nth-child(2),
+.planning-matrix td:nth-child(2) {
+  min-width: 270px;
+}
+
+.planning-matrix th:nth-child(n+4),
+.planning-matrix td:nth-child(n+4) {
+  min-width: 42px;
+}
+
+.planning-lower {
+  margin-top: 0;
+}
+
 .day-pills {
   display: flex;
   align-items: center;
@@ -1025,17 +1148,32 @@ label .muted {
 }
 
 .day-pills b,
+.day-pills button.active,
 .tabs button.active {
   color: #fff;
   background: var(--brand);
 }
 
-.day-pills b {
+.day-pills b,
+.day-pills button {
   width: 26px;
   height: 26px;
   display: grid;
   place-items: center;
   border-radius: 50%;
+}
+
+.day-pills button {
+  border: 1px solid var(--line);
+  color: var(--muted);
+  background: #eef2f7;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.planning-days {
+  margin-top: 14px;
+  flex-wrap: wrap;
 }
 
 .tabs {

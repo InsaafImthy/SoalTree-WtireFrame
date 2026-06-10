@@ -805,6 +805,197 @@ label .muted {
   box-shadow: 0 12px 34px rgba(15, 23, 42, .08);
 }
 
+.invoice-paper {
+  padding: 30px;
+  color: #111827;
+  background: #fff;
+  box-shadow: 0 12px 34px rgba(15, 23, 42, .08);
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+.invoice-header {
+  display: grid;
+  grid-template-columns: 1fr 1.2fr;
+  gap: 30px;
+  margin-bottom: 25px;
+  border-bottom: 2px solid #8b4242;
+  padding-bottom: 20px;
+}
+
+.invoice-company {
+  display: flex;
+  gap: 15px;
+}
+
+.invoice-logo {
+  font-size: 36px;
+  line-height: 1;
+}
+
+.invoice-brand {
+  font-size: 18px;
+  font-weight: 800;
+  color: #8b4242;
+  margin-bottom: 8px;
+}
+
+.invoice-brand-sub {
+  margin-left: 4px;
+  color: #8b4242;
+}
+
+.invoice-company p {
+  font-size: 11px;
+  line-height: 1.4;
+  color: #333;
+  margin: 0;
+}
+
+.invoice-title {
+  text-align: right;
+}
+
+.invoice-title-main {
+  font-size: 16px;
+  font-weight: 800;
+  color: #8b4242;
+  margin-bottom: 10px;
+}
+
+.invoice-number {
+  font-size: 11px;
+  color: #666;
+  line-height: 1.5;
+}
+
+.invoice-meta {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 20px;
+  font-size: 12px;
+  margin-bottom: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid #ddd;
+}
+
+.invoice-meta div {
+  display: flex;
+  justify-content: space-between;
+}
+
+.invoice-meta strong {
+  color: #666;
+  font-weight: 600;
+}
+
+.invoice-items {
+  margin: 25px 0;
+}
+
+.invoice-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 20px;
+}
+
+.invoice-table thead tr {
+  background: #f5f5f5;
+  border: 1px solid #ddd;
+}
+
+.invoice-table th {
+  padding: 10px 8px;
+  text-align: left;
+  font-size: 12px;
+  font-weight: 700;
+  color: #333;
+  border: 1px solid #ddd;
+}
+
+.invoice-table td {
+  padding: 10px 8px;
+  font-size: 12px;
+  border: 1px solid #ddd;
+}
+
+.invoice-table tbody tr:nth-child(even) {
+  background: #fafafa;
+}
+
+.invoice-table tbody tr:hover {
+  background: #f0f0f0;
+}
+
+.invoice-num {
+  text-align: right;
+  font-family: 'Courier New', monospace;
+}
+
+.invoice-table tfoot tr {
+  background: #fff;
+  font-weight: 700;
+  border: 1px solid #333;
+}
+
+.invoice-subtotal td {
+  padding: 12px 8px;
+  border-top: 2px solid #ddd;
+  border-bottom: 1px solid #ddd;
+  text-align: left;
+}
+
+.invoice-subtotal .invoice-num {
+  text-align: right;
+  border-right: none;
+}
+
+.invoice-tax td {
+  padding: 12px 8px;
+  border: 1px solid #ddd;
+  text-align: left;
+}
+
+.invoice-tax .invoice-num {
+  text-align: right;
+}
+
+.invoice-total td {
+  padding: 14px 8px;
+  border: 2px solid #333;
+  background: #f9f9f9;
+  text-align: left;
+  font-weight: 800;
+  font-size: 13px;
+}
+
+.invoice-total .invoice-num {
+  text-align: right;
+  color: #333;
+}
+
+.invoice-footer {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 30px;
+  margin-top: 30px;
+  padding-top: 20px;
+  border-top: 1px solid #ddd;
+  font-size: 11px;
+}
+
+.invoice-remarks p {
+  margin: 0;
+  line-height: 1.5;
+  color: #555;
+}
+
+.invoice-sign p {
+  margin: 0;
+  text-align: center;
+  line-height: 2;
+}
+
 .paper-head {
   display: grid;
   grid-template-columns: 1fr 1.45fr 220px;
@@ -1657,6 +1848,53 @@ label .muted {
 .kitchen-airline.qatar { color: #c33172; }
 .kitchen-airline.spice { color: #f05d48; }
 .kitchen-airline.airindia { color: #ff4646; }
+
+@media print {
+  .toolbar, .notice, aside, .panel-head {
+    display: none !important;
+  }
+  
+  .content {
+    padding: 0;
+  }
+  
+  .app-shell {
+    display: block;
+  }
+  
+  .sidebar, .topbar {
+    display: none;
+  }
+  
+  .main {
+    margin: 0;
+    padding: 0;
+  }
+  
+  .invoice-paper {
+    box-shadow: none;
+    padding: 20px;
+    max-width: 100%;
+    margin: 0;
+    page-break-after: always;
+  }
+  
+  .challan-paper {
+    box-shadow: none;
+    padding: 20px;
+    page-break-after: always;
+  }
+  
+  .invoice-table {
+    page-break-inside: avoid;
+  }
+  
+  body {
+    margin: 0;
+    padding: 0;
+    background: white;
+  }
+}
 
 .kitchen-total-pax {
   color: #f8d24e !important;

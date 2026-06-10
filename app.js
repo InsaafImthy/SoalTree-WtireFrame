@@ -1579,6 +1579,84 @@ function loadTableReadOnly() {
   `;
 }
 
+function invoicePaper(items, subtotal, tax, totalValue) {
+  const flight = selectedFlight();
+  const exchangeRate = 150.35;
+  return `
+    <div class="invoice-paper">
+      <div class="invoice-header">
+        <div class="invoice-company">
+          <div class="invoice-logo">🛫</div>
+          <div>
+            <div class="invoice-brand">The Soaltee <span class="invoice-brand-sub">Gategourmet</span></div>
+            <p>PO Box 97, Tilganga, Gaushala (Airport Road)<br>Kathmandu, Nepal<br>Telephone: 977-1-4113671, 4113697<br>Fax: 977-1-4113662</p>
+          </div>
+        </div>
+        <div class="invoice-title">
+          <div class="invoice-title-main">INFORMATION INVOICE</div>
+          <div class="invoice-number">TPIN 300047697<br>Page 1 of 1</div>
+        </div>
+      </div>
+      <div class="invoice-meta">
+        <div><strong>Name of Airline:</strong> ${flight.airline}</div>
+        <div><strong>Flt. No.:</strong> ${flight.flightNo}</div>
+        <div style="text-align:right"><strong>S. No.:</strong> ${state.invoice.number || "AUTO"}</div>
+      </div>
+      <div class="invoice-meta">
+        <div><strong>Flight Details:</strong> ${flight.sector}</div>
+        <div><strong>Date:</strong> ${state.kot.date}</div>
+      </div>
+      <div class="invoice-items">
+        <table class="invoice-table">
+          <thead>
+            <tr>
+              <th>S.No.</th>
+              <th>No. of Meals</th>
+              <th>Type of Meals</th>
+              <th class="invoice-num">Rate</th>
+              <th class="invoice-num">Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${items.map((item, i) => {
+              const amount = item.qty * item.rate;
+              return `<tr>
+                <td>${i + 1}</td>
+                <td class="invoice-num">${item.qty}</td>
+                <td>${item.desc}</td>
+                <td class="invoice-num">${item.rate.toFixed(2)}</td>
+                <td class="invoice-num">${amount.toFixed(2)}</td>
+              </tr>`;
+            }).join("")}
+          </tbody>
+          <tfoot>
+            <tr class="invoice-subtotal">
+              <td colspan="4"><strong>SUB TOTAL</strong></td>
+              <td class="invoice-num"><strong>${subtotal.toFixed(2)}</strong></td>
+            </tr>
+            <tr class="invoice-tax">
+              <td colspan="4"><strong>C.A</strong></td>
+              <td class="invoice-num"><strong>${tax.toFixed(2)}</strong></td>
+            </tr>
+            <tr class="invoice-total">
+              <td colspan="4"><strong>TOTAL</strong></td>
+              <td class="invoice-num"><strong>$&nbsp;${totalValue.toFixed(2)}</strong></td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+      <div class="invoice-footer">
+        <div class="invoice-remarks">
+          <p><small><strong>Notes:</strong> Thank you for your business. Please make payment within 30 days of invoice date.</small></p>
+        </div>
+        <div class="invoice-sign">
+          <p><small>Name & Sign of Flt. Cat. Representative:</small></p>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 function renderChallanFull() {
   return layout("Gate Pass Cum Delivery Challan", "Printable meal on board document", `<section class="content">${challanPaper(true)}</section>`);
 }
@@ -1627,56 +1705,10 @@ function renderInvoice() {
         <span style="flex:1"></span>
         <button class="btn blue" onclick="setupInvoiceFromChallan()">Refresh from Chalan</button>
         <button class="btn" onclick="showToast('Invoice draft saved locally.')">Save Draft</button>
-        <button class="btn" onclick="previewInvoice()">Preview Invoice</button>
+        <button class="btn" onclick="window.print()">Print Invoice</button>
         <button class="btn green" onclick="generateInvoice()">Generate Invoice</button>
       </div>
-      <div class="notice"><span class="check">${sourceReady ? "✓" : "!"}</span><div><b>${sourceReady ? "Invoice setup linked to prepared chalan" : "Invoice setup requires prepared chalan"}</b><br><span class="muted">Finance billing is based on chalan ${state.kot.challanNo}, flight ${flight.flightNo}, confirmed delivered meals and ancillaries.</span></div></div>
-      <div class="invoice-layout">
-        <div>
-          <div class="panel">
-            <div class="panel-head"><h2>Chalan Source Setup</h2>${badge(state.invoice.status)}</div>
-            <div class="chart-header">
-              ${[
-                ["Selected Chalan", state.invoice.sourceChallanNo || "Not setup"],
-                ["Source Flight", state.invoice.sourceFlightNo || flight.flightNo],
-                ["Chalan Approval", badge(flight.production)],
-                ["Setup Time", state.invoice.setupAt || "Pending"],
-                ["Final Pax", calc.finalPax],
-                ["Meals Delivered", calc.totalMeals],
-                ["Ancillary Lines", calc.ancillaries.length],
-                ["Total Delivered Qty", calc.deliveredTotal]
-              ].map(([a,b]) => `<div class="info-row"><span>${a}</span><strong>${b}</strong></div>`).join("")}
-            </div>
-          </div>
-          <div class="panel"><div class="chart-header">${[
-            ["Airline", flight.airline], ["Flight Date", state.kot.date], ["Currency", "USD"], ["Sector", flight.sector], ["Challan No.", state.kot.challanNo], ["Exchange Rate (NPR)", "150.35"], ["Flight No.", flight.flightNo], ["Std. Time (STD)", flight.std], ["Invoice No.", state.invoice.number || "Auto (Will be generated)"]
-          ].map(([a,b]) => `<div class="info-row"><span>${a}</span><strong>${b}</strong></div>`).join("")}</div></div>
-          <div class="panel"><div style="display:flex;justify-content:space-between;align-items:center"><h2>Billable Items</h2><div><button class="btn">Add Charge</button> <button class="btn">Edit Rate</button></div></div>${invoiceTable(items)}</div>
-          <div class="paper-grid three">
-            <div class="panel"><h2>Billing Remarks</h2><textarea>Thank you for your business.</textarea></div>
-            <div class="panel"><h2>Tax Details</h2><table class="compact-table"><tbody><tr><td>VAT</td><td>10.00</td><td>${subtotal.toFixed(2)}</td><td>${tax.toFixed(2)}</td></tr><tr class="total-row"><td colspan="3">Total Tax</td><td>${tax.toFixed(2)}</td></tr></tbody></table></div>
-            ${sidePanel("Payment Terms", [["Payment Terms", "30 Days"], ["Due Date", "15/07/2026"], ["Payment Currency", "USD"], ["Bank Details", "Soaltee Hotel Ltd.<br>Nabil Bank Limited"]])}
-          </div>
-          <div class="paper-grid three">
-            <div class="panel"><h2>Attachments</h2><div class="notice">Drag and drop files here or click to upload<br><span class="muted">Max file size 5MB, PDF, JPG, PNG</span></div></div>
-            <div class="panel"><h2>Internal Notes</h2><textarea placeholder="Write internal note here..."></textarea></div>
-            <div class="panel"><h2>Action Buttons</h2><div class="actions-stack"><button class="btn" onclick="showToast('Invoice draft saved locally.')">Save Draft</button><button class="btn" onclick="previewInvoice()">Preview Invoice</button><button class="btn green" onclick="generateInvoice()">Generate Invoice</button><button class="btn" onclick="window.print()">Print Invoice</button><button class="btn" onclick="downloadDemoDocument('invoice')">Download PDF</button><button class="btn" onclick="showToast('Email invoice action queued for demo.')">Email Invoice</button></div></div>
-          </div>
-        </div>
-        <aside>
-          <div class="panel"><h2>Invoice Summary</h2><div class="summary-box"><div class="summary-line"><span>Sub Total (USD)</span><b>${subtotal.toFixed(2)}</b></div><div class="summary-line"><span>Taxable Amount (USD)</span><b>${subtotal.toFixed(2)}</b></div><div class="summary-line"><span>Tax (10%)</span><b>${tax.toFixed(2)}</b></div><div class="summary-line summary-total"><span>Grand Total (USD)</span><b>${totalValue.toFixed(2)}</b></div></div></div>
-          <div class="panel"><h2>Amount in NPR @ 150.35</h2><div class="summary-total">Grand Total (NPR) <b style="float:right">${(totalValue * 150.35).toLocaleString(undefined, { maximumFractionDigits: 2 })}</b></div></div>
-          <div class="panel"><h2>Validation Status</h2><div class="status-list">${[
-            ["Chalan Selected", sourceReady],
-            ["Chalan Approved", flight.production === "approved" || flight.production === "dispatched"],
-            ["Delivered Items Verified", calc.totalMeals > 0],
-            ["Rates Available", items.every((item) => item.rate > 0)],
-            ["Tax Applied", tax > 0],
-            [state.invoice.status === "generated" ? "Invoice Generated" : "Invoice Ready", sourceReady]
-          ].map(([item, ok]) => `<div class="check-line ${ok ? "" : "warning-line"}"><span class="check">${ok ? "✓" : "!"}</span>${item}</div>`).join("")}</div></div>
-          <div class="panel"><h2>Revenue Check</h2>${sidePanel("", [["Expected Value (USD)", totalValue.toFixed(2)], ["Generated Value (USD)", totalValue.toFixed(2)], ["Variance", "0.00"], ["Status", "✓ Matched"]])}</div>
-        </aside>
-      </div>
+      ${invoicePaper(items, subtotal, tax, totalValue)}
     </section>`;
   return layout("Invoice Generation", "Create Invoice from Delivery Challan", body, "finance");
 }

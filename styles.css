@@ -302,6 +302,10 @@ button {
   margin-bottom: 16px;
 }
 
+.master-kpi-grid {
+  grid-template-columns: repeat(4, minmax(160px, 1fr));
+}
+
 .kitchen-launch-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(160px, 1fr));
@@ -357,10 +361,25 @@ button {
 
 .toolbar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 10px;
   padding: 12px;
   margin-bottom: 14px;
+}
+
+.master-toolbar {
+  flex-wrap: wrap;
+}
+
+.toolbar .field,
+.toolbar .search {
+  flex: 1 1 190px;
+  min-width: 0;
+}
+
+.toolbar .btn {
+  flex: 0 0 auto;
 }
 
 .field,
@@ -455,10 +474,20 @@ textarea {
   padding: 0;
 }
 
+.row-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .table-wrap {
   overflow: auto;
   border-radius: 10px;
   max-width: 100%;
+}
+
+.master-table-wrap table {
+  min-width: 1280px;
 }
 
 .panel > table,
@@ -1452,6 +1481,10 @@ label .muted {
   overflow: hidden;
 }
 
+.wide-modal {
+  width: min(1180px, calc(100vw - 36px));
+}
+
 .modal-head,
 .modal-foot {
   display: flex;
@@ -1470,6 +1503,30 @@ label .muted {
 
 .modal-body {
   padding: 18px;
+  max-height: min(72vh, 780px);
+  overflow: auto;
+}
+
+.info-row {
+  gap: 12px;
+}
+
+.info-row span,
+.info-row strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.full-field {
+  display: block;
+  margin-top: 14px;
+}
+
+.json-editor {
+  min-height: 240px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .kitchen-board {

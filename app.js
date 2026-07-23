@@ -1,12 +1,15 @@
-const STORAGE_KEY = "soaltee-kot-wireframe-state-v1";
-const KOT_STEPS = ["Planning Data", "Pax Update", "Meal Calculation", "Special Meals", "Ancillaries", "Review & Summary"];
+const LEGACY_STORAGE_KEY = "soaltee-kot-wireframe-state-v1";
+const STORAGE_KEY = "soaltee-kot-wireframe-state-v2";
+const STATE_VERSION = 2;
+const KOT_STEPS = ["Master Data", "Pax Update", "Special Meals", "Ancillaries", "Meal Calculation", "Review & Summary"];
+const MASTER_SCREENS = ["flight-master", "menu-master", "flight-menu-mapping", "ancillary-master", "loading-sheet-master"];
 
 const seed = {
   screen: "queue",
   selectedFlight: "FZ576",
   kotStep: 0,
   challanLocked: false,
-  queueFilters: { status: "All Status", airline: "All Airlines", sector: "All Sectors", search: "" },
+  queueFilters: { status: "All Status", configStatus: "All Config", airline: "All Airlines", sector: "All Sectors", search: "" },
   invoice: { status: "draft", number: "", generatedAt: "", sourceChallanNo: "", sourceFlightNo: "", setupAt: "" },
   loadingChart: {
     airline: "FlyDubai",
@@ -119,17 +122,956 @@ if (state.screen === "kitchen-display") {
   }, 4000);
 }
 
+function createSeedState() {
+  const next = structuredClone(seed);
+  next.version = STATE_VERSION;
+  next.operatingDate = "2026-06-15";
+  next.masters = createSeedMasters(next);
+  next.dailyOperations = createDailyOperations(next.flights, next.masters);
+  next.challans = [];
+  next.invoices = [];
+  next.auditTrail = [
+    { id: generateId("audit"), at: "2026-06-15 10:24", action: "Seed data initialized", entityType: "System", entityId: "demo" }
+  ];
+  next.selectedFlightMasterId = next.masters.flights[0]?.id || "";
+  next.selectedMenuId = next.masters.menus[0]?.id || "";
+  next.selectedMappingId = next.masters.flightMenuMappings[0]?.id || "";
+  next.selectedAncillaryId = next.masters.ancillaryItems[0]?.id || "";
+  next.selectedLoadingSheetId = next.masters.loadingSheets[0]?.id || "";
+  return next;
+}
+
+function migrateState(saved) {
+  const base = createSeedState();
+  const next = { ...base, ...(saved || {}) };
+  next.version = STATE_VERSION;
+  next.flights = Array.isArray(saved?.flights) && saved.flights.length ? saved.flights : base.flights;
+  next.loadingChart = saved?.loadingChart || base.loadingChart;
+  next.masters = normalizeMasters(saved?.masters, next);
+  next.dailyOperations = Array.isArray(saved?.dailyOperations) && saved.dailyOperations.length
+    ? saved.dailyOperations
+    : createDailyOperations(next.flights, next.masters);
+  next.auditTrail = Array.isArray(saved?.auditTrail) ? saved.auditTrail : base.auditTrail;
+  next.challans = Array.isArray(saved?.challans) ? saved.challans.map(normalizeChallanRecord) : base.challans;
+  next.invoices = Array.isArray(saved?.invoices) ? saved.invoices : [];
+  return next;
+}
+
+function normalizeMasters(masters, sourceState = state) {
+  const seeded = createSeedMasters(sourceState || seed);
+  const normalized = {
+    flights: Array.isArray(masters?.flights) && masters.flights.length ? masters.flights : seeded.flights,
+    menus: Array.isArray(masters?.menus) && masters.menus.length ? masters.menus : seeded.menus,
+    flightMenuMappings: Array.isArray(masters?.flightMenuMappings) && masters.flightMenuMappings.length ? masters.flightMenuMappings : seeded.flightMenuMappings,
+    ancillaryItems: Array.isArray(masters?.ancillaryItems) && masters.ancillaryItems.length ? masters.ancillaryItems : seeded.ancillaryItems,
+    loadingSheets: Array.isArray(masters?.loadingSheets) && masters.loadingSheets.length ? masters.loadingSheets : seeded.loadingSheets
+  };
+  normalized.flights = normalized.flights.map(normalizeFlightMasterRecord);
+  normalized.menus = normalized.menus.map(normalizeMenuRecord);
+  normalized.flightMenuMappings = normalized.flightMenuMappings.map(normalizeMappingRecord);
+  normalized.ancillaryItems = normalized.ancillaryItems.map(normalizeAncillaryRecord);
+  normalized.loadingSheets = normalized.loadingSheets.map(normalizeLoadingSheetRecord);
+  return normalized;
+}
+
+function createSeedMasters(sourceState = seed) {
+  const sourceFlights = Array.isArray(sourceState.flights) && sourceState.flights.length ? sourceState.flights : seed.flights;
+  const flights = sourceFlights.map((flight, index) => makeFlightMasterFromFlight(flight, index));
+  const menus = createSeedMenus(sourceState);
+  const flightMenuMappings = flights.map((flight, index) => ({
+    id: generateId("map", index),
+    mappingCode: `MAP-${flight.flightNumber}-${String(index + 1).padStart(2, "0")}`,
+    flightMasterId: flight.id,
+    menuId: menus[index % Math.max(menus.length - 1, 1)].id,
+    serviceSequence: "1",
+    serviceType: menus[index % Math.max(menus.length - 1, 1)].serviceType,
+    effectiveFrom: "2026-02-01",
+    effectiveTo: "2026-08-24",
+    priority: index === 0 ? 1 : 5,
+    status: "Active",
+    notes: index === flights.length - 1 ? "Example for later validation: confirm latest airline rotation before operations." : "Standard active flight-menu assignment."
+  }));
+  const ancillaryItems = createSeedAncillaryItems(flights);
+  const loadingSheets = createSeedLoadingSheets(sourceState, flights, menus);
+  return { flights, menus, flightMenuMappings, ancillaryItems, loadingSheets };
+}
+
+function makeFlightMasterFromFlight(flight, index = 0) {
+  const [origin = "", destination = ""] = String(flight.sector || "").split(" - ").map((part) => part.trim());
+  const airlineCode = String(flight.flightNo || `FL${index + 1}`).replace(/[0-9]/g, "") || "FL";
+  const economy = Number(flight.y || flight.capacity || 0);
+  const business = Number(flight.j || 0);
+  const premium = Number(flight.w || 0);
+  return {
+    id: flight.flightMasterId || generateId("flt", index),
+    flightCode: `${airlineCode}-${flight.flightNo || index + 1}-${origin || "KTM"}-${destination || "TBD"}`,
+    airline: flight.airline || "",
+    flightNumber: flight.flightNo || "",
+    description: `${flight.airline || "Airline"} ${flight.flightNo || ""} ${origin || ""}-${destination || ""}`.trim(),
+    origin,
+    destination,
+    sector: `${origin} - ${destination}`.trim(),
+    operatingDays: Array.isArray(flight.operatingDays) ? flight.operatingDays : ["Mon", "Wed", "Fri", "Sun"],
+    scheduledDeparture: flight.std || "11:30",
+    scheduledArrival: flight.arrivalTime || "15:05",
+    effectiveFrom: "2026-02-01",
+    effectiveTo: "2026-08-24",
+    aircraftType: flight.aircraft || "B737-800",
+    defaultRegistration: flight.reg || "",
+    businessCapacity: business,
+    premiumEconomyCapacity: premium,
+    economyCapacity: economy,
+    totalPassengerCapacity: business + premium + economy,
+    technicalCrewCount: Number(flight.tc || 2),
+    cabinCrewCount: Number(flight.cc || 6),
+    loadingBay: index % 3 === 0 ? "Bay 02" : "Bay 01",
+    gateType: flight.aircraft === "B777-300ER" || flight.aircraft === "A330" ? "Wide Body" : "Narrow Body",
+    upliftType: "Full Uplift",
+    hotMealDishOutTime: "13:15",
+    coldMealPreparationTime: "13:00",
+    dispatchTime: "14:45",
+    remarks: flight.operationalRemarks || "Standard uplift.",
+    status: "Active"
+  };
+}
+
+function createSeedMenus(sourceState = seed) {
+  const rows = (sourceState.loadingChart?.rows || seed.loadingChart.rows).map((row, index) => ({
+    id: generateId("mlin", index),
+    itemCode: row.code,
+    itemName: row.name,
+    category: categoryFromDish(row.name, row.remarks),
+    mealType: index < 5 ? "Hot Breakfast" : "Tray Setup",
+    classification: row.name.toLowerCase().includes("veg") || row.name.toLowerCase().includes("uttapam") ? "Vegetarian" : index < 5 ? "Non-Vegetarian" : "Other",
+    specialMealCode: "",
+    unit: row.unit,
+    unitPrice: index < 5 ? 3.8 : index < 9 ? 0.45 : 2.84,
+    taxPercentage: 10,
+    invoiceItemCode: `INV-${String(row.code).replace(/[^A-Z0-9]/gi, "").slice(0, 10).toUpperCase()}`,
+    status: "Active",
+    displaySequence: index + 1
+  }));
+  return [
+    {
+      id: "menu-cycle-a-hot-breakfast",
+      menuCode: "CYCLE-A-HB",
+      menuName: "Cycle A Hot Breakfast KTM",
+      menuCycle: "Cycle A",
+      description: "Primary hot breakfast menu with tray setup and accompaniments.",
+      serviceType: "Hot Breakfast",
+      serviceSequence: "1",
+      cabinClasses: ["Business", "Economy", "Crew"],
+      currency: "USD",
+      version: "3",
+      effectiveFrom: "2026-02-01",
+      effectiveTo: "2026-08-24",
+      status: "Active",
+      lines: rows
+    },
+    {
+      id: "menu-cycle-b-main-meal",
+      menuCode: "CYCLE-B-MM",
+      menuName: "Cycle B Main Meal KTM",
+      menuCycle: "Cycle B",
+      description: "Demo main meal cycle used by regional carriers.",
+      serviceType: "Main Meal",
+      serviceSequence: "1",
+      cabinClasses: ["Business", "Economy", "Crew"],
+      currency: "USD",
+      version: "1",
+      effectiveFrom: "2026-02-01",
+      effectiveTo: "2026-08-24",
+      status: "Active",
+      lines: [
+        makeMenuLine("MM-NV-01", "Chicken Curry with Rice", "Main Course", "Main Meal", "Non-Vegetarian", "Pax", 4.15, 1),
+        makeMenuLine("MM-VG-01", "Vegetable Pulao Meal", "Vegetarian", "Main Meal", "Vegetarian", "Pax", 3.55, 2),
+        makeMenuLine("MM-ALT-01", "Pasta Alternate Meal", "Alternate Meal", "Main Meal", "Other", "Pax", 3.7, 3),
+        makeMenuLine("CM-001", "Crew Meal Standard", "Crew Meal", "Crew Meal", "Other", "Pax", 4.17, 4)
+      ]
+    },
+    {
+      id: "menu-incomplete-demo",
+      menuCode: "DRAFT-SPML",
+      menuName: "Draft Special Meal Pack",
+      menuCycle: "Special",
+      description: "Partially configured example for validation demos.",
+      serviceType: "Special Meal",
+      serviceSequence: "1",
+      cabinClasses: ["Economy"],
+      currency: "USD",
+      version: "0",
+      effectiveFrom: "2026-09-01",
+      effectiveTo: "2026-12-31",
+      status: "Inactive",
+      lines: []
+    }
+  ];
+}
+
+function makeMenuLine(code, name, category, mealType, classification, unit, rate, sequence) {
+  return {
+    id: generateId("mlin", `${code}-${sequence}`),
+    itemCode: code,
+    itemName: name,
+    category,
+    mealType,
+    classification,
+    specialMealCode: "",
+    unit,
+    unitPrice: rate,
+    taxPercentage: 10,
+    invoiceItemCode: `INV-${code}`,
+    status: "Active",
+    displaySequence: sequence
+  };
+}
+
+function createSeedAncillaryItems(flights) {
+  return [
+    makeAncillary("ANC-JUICE-1L", "Assorted Fresh Juice - 1000 ml", "Beverage", "Pkt", 1.2, "per_x_pax", { paxDivisor: 65, minimumQuantity: 2 }),
+    makeAncillary("ANC-WATER-500", "Mineral Water - 500 ml", "Beverage", "Btl", 0.08, "per_passenger", {}),
+    makeAncillary("ANC-ICE", "Ice Cube", "Cold Chain", "Kg", 2, "fixed", { fixedQuantity: 20 }),
+    { ...makeAncillary("ANC-CUPS", "Paper Cups", "Service Item", "Pcs", 0.03, "buffer", { bufferPercentage: 5 }), invoiceEnabled: false },
+    makeAncillary("ANC-TOPUP-VAN", "Top Up Van", "Logistics", "Trip", 100, "fixed", { fixedQuantity: 1 }),
+    {
+      ...makeAncillary("ANC-DRAFT", "Draft Airline Amenity", "Other", "Pcs", 0, "manual", {}),
+      status: "Inactive",
+      applicability: { type: "selected_flight", airline: flights[0]?.airline || "", flightMasterId: flights[0]?.id || "", route: "", aircraftType: "" }
+    }
+  ];
+}
+
+function makeAncillary(code, name, category, unit, rate, calculationType, overrides) {
+  return {
+    id: generateId("anc", code),
+    itemCode: code,
+    itemName: name,
+    description: `${name} operational ancillary item.`,
+    category,
+    unit,
+    currency: "USD",
+    unitRate: rate,
+    taxPercentage: 10,
+    invoiceItemCode: `INV-${code}`,
+    invoiceEnabled: true,
+    status: "Active",
+    applicability: { type: "all_airlines", airline: "", flightMasterId: "", route: "", aircraftType: "" },
+    calculationRule: {
+      calculationType,
+      quantityPerPax: calculationType === "per_passenger" ? 1 : 0,
+      paxDivisor: 0,
+      fixedQuantity: 0,
+      bufferPercentage: 0,
+      minimumQuantity: 0,
+      maximumQuantity: null,
+      roundingMethod: "ceil",
+      allowOperationalOverride: true,
+      ...overrides
+    }
+  };
+}
+
+function createSeedLoadingSheets(sourceState, flights, menus) {
+  const chart = sourceState.loadingChart || seed.loadingChart;
+  const flight = flights.find((item) => item.flightNumber === chart.flightNo) || flights[0];
+  const menu = menus[0];
+  return [
+    {
+      id: "loadsheet-fz576-hb-v3",
+      loadingSheetCode: chart.chartCode || "MLC-FZ576-15062026-03",
+      version: chart.version || "3",
+      flightMasterId: flight?.id || "",
+      aircraftType: chart.aircraftType || flight?.aircraftType || "",
+      menuId: menu.id,
+      serviceSequence: "1",
+      mealType: chart.mealType || menu.serviceType,
+      daysOfOperation: flight?.operatingDays || ["Mon", "Tue", "Thu", "Sat"],
+      effectiveFrom: "2026-02-01",
+      effectiveTo: "2026-08-24",
+      rotation: `${chart.rotationFrom || "01-FEB-2026"} - ${chart.rotationTo || "28-FEB-2026"}`,
+      notes: chart.notes || "FlyDubai Hot Breakfast MLC",
+      status: "Active",
+      lines: chart.rows.map((row, index) => {
+        const menuLine = menu.lines.find((line) => line.itemCode === row.code) || menu.lines[index];
+        return {
+          id: generateId("lsln", index),
+          menuLineId: menuLine?.id || "",
+          menuItemCode: row.code,
+          menuItemName: row.name,
+          category: menuLine?.category || categoryFromDish(row.name, row.remarks),
+          unit: row.unit,
+          cabinClass: row.ratioType?.startsWith("J") ? "Business" : row.ratioType?.startsWith("Crew") ? "Crew" : "All",
+          ratioType: normalizeRatioType(row.ratioType),
+          ratioValue: row.ratioValue,
+          fixedQuantity: 0,
+          quantityPerPassenger: row.ratioValue === "1:1" ? 1 : 0,
+          minimumQuantity: 0,
+          maximumQuantity: "",
+          bufferPercentage: 0,
+          roundingMethod: "ceil",
+          displaySequence: index + 1,
+          remarks: row.remarks || ""
+        };
+      })
+    },
+    {
+      id: "loadsheet-partial-demo",
+      loadingSheetCode: "MLC-DRAFT-VALIDATION",
+      version: "0",
+      flightMasterId: flights[1]?.id || "",
+      aircraftType: flights[1]?.aircraftType || "A320neo",
+      menuId: "menu-incomplete-demo",
+      serviceSequence: "1",
+      mealType: "Special Meal",
+      daysOfOperation: ["Mon"],
+      effectiveFrom: "2026-09-01",
+      effectiveTo: "2026-12-31",
+      rotation: "Draft",
+      notes: "Partially configured example.",
+      status: "Inactive",
+      lines: []
+    }
+  ];
+}
+
+function createDailyOperations(flights, masters) {
+  const tempState = { operatingDate: "2026-06-15", masters, dailyOperations: [], flights: flights || [] };
+  return generateDailyOperations(tempState.operatingDate || "2026-06-15", tempState, true);
+}
+
+function generateDailyOperations(operationDate = state.operatingDate, sourceState = state, silent = false) {
+  const existing = Array.isArray(sourceState.dailyOperations) ? sourceState.dailyOperations : [];
+  const day = dayName(operationDate);
+  const eligibleFlights = (sourceState.masters?.flights || [])
+    .filter((flight) => flight.status === "Active")
+    .filter((flight) => flight.operatingDays.includes(day))
+    .filter((flight) => isDateWithinRange(operationDate, flight.effectiveFrom, flight.effectiveTo));
+  const next = existing.filter((operation) => operation.operatingDate !== operationDate);
+  eligibleFlights.forEach((flightMaster, index) => {
+    const current = existing.find((operation) => operation.operatingDate === operationDate && operation.flightMasterId === flightMaster.id);
+    const operation = current ? normalizeDailyOperation(current, sourceState) : buildDailyOperation(operationDate, flightMaster, sourceState, index);
+    if (!current && !silent) logAudit("Daily operation generated", "DailyOperation", operation.id, `${flightMaster.flightNumber} for ${operationDate}`);
+    next.push(operation);
+  });
+  sourceState.dailyOperations = next;
+  return next.filter((operation) => operation.operatingDate === operationDate);
+}
+
+function buildDailyOperation(operationDate, flightMaster, sourceState = state, index = 0) {
+  const operation = {
+    id: generateId("op", `${operationDate}-${flightMaster.id}`),
+    operationDate,
+    operatingDate: operationDate,
+    flightMasterId: flightMaster.id,
+    mappingId: "",
+    menuId: "",
+    loadingSheetId: "",
+    ancillaryItemIds: [],
+    flightSnapshot: createSnapshot(flightMaster),
+    mappingSnapshot: null,
+    menuSnapshot: null,
+    loadingSheetSnapshot: null,
+    ancillarySnapshots: [],
+    confirmedPax: Math.max(0, Number(flightMaster.totalPassengerCapacity || 0) - (index % 2 ? 42 : 35)),
+    additionalPax: 0,
+    businessPax: Number(flightMaster.businessCapacity || 0),
+    premiumEconomyPax: Number(flightMaster.premiumEconomyCapacity || 0),
+    economyPax: Math.max(0, Number(flightMaster.totalPassengerCapacity || 0) - Number(flightMaster.businessCapacity || 0) - Number(flightMaster.premiumEconomyCapacity || 0) - (index % 2 ? 42 : 35)),
+    technicalCrew: Number(flightMaster.technicalCrewCount || 0),
+    cabinCrew: Number(flightMaster.cabinCrewCount || 0),
+    specialPassengerCount: 0,
+    specialMeals: defaultSpecialMeals(),
+    ancillaryOverrides: {},
+    allowOverCapacity: false,
+    overCapacityReason: "",
+    operationalRemarks: flightMaster.remarks || "",
+    kot: "Draft",
+    meal: "not started",
+    dispatch: "pending",
+    production: "pending",
+    kitchenStatus: "Pending",
+    configurationStatus: "Ready",
+    configurationMessages: [],
+    productionPlanSnapshot: null,
+    invoiceLineSnapshot: [],
+    kotSnapshot: null,
+    kotConfirmedAt: "",
+    lastCalculatedAt: "",
+    refreshedAt: "",
+    auditTrail: ["Daily operation generated from master data."]
+  };
+  return refreshOperationFromMasters(operation, sourceState, true);
+}
+
+function normalizeDailyOperation(operation, sourceState = state) {
+  const flightMaster = sourceState.masters?.flights?.find((flight) => flight.id === operation.flightMasterId);
+  const legacyFlight = !flightMaster ? sourceState.flights?.find((flight) => flight.flightNo === operation.flightNo) : null;
+  const flightSnapshot = operation.flightSnapshot || (flightMaster ? createSnapshot(flightMaster) : legacyFlight ? createSnapshot(makeFlightMasterFromFlight(legacyFlight)) : {});
+  const next = {
+    ...operation,
+    id: operation.id || operation.operationId || generateId("op"),
+    operationDate: operation.operationDate || operation.operatingDate || sourceState.operatingDate || "2026-06-15",
+    operatingDate: operation.operatingDate || operation.operationDate || sourceState.operatingDate || "2026-06-15",
+    flightMasterId: operation.flightMasterId || flightSnapshot.id || "",
+    flightSnapshot,
+    mappingSnapshot: operation.mappingSnapshot || null,
+    menuSnapshot: operation.menuSnapshot || null,
+    loadingSheetSnapshot: operation.loadingSheetSnapshot || null,
+    ancillarySnapshots: Array.isArray(operation.ancillarySnapshots) ? operation.ancillarySnapshots : [],
+    ancillaryItemIds: Array.isArray(operation.ancillaryItemIds) ? operation.ancillaryItemIds : [],
+    specialMeals: { ...defaultSpecialMeals(), ...(operation.specialMeals || {}) },
+    ancillaryOverrides: operation.ancillaryOverrides || {},
+    confirmedPax: Number(operation.confirmedPax || 0),
+    additionalPax: Number(operation.additionalPax || 0),
+    businessPax: Number(operation.businessPax ?? flightSnapshot.businessCapacity ?? 0),
+    premiumEconomyPax: Number(operation.premiumEconomyPax ?? flightSnapshot.premiumEconomyCapacity ?? 0),
+    economyPax: Number(operation.economyPax ?? operation.confirmedPax ?? flightSnapshot.economyCapacity ?? 0),
+    technicalCrew: Number(operation.technicalCrew ?? flightSnapshot.technicalCrewCount ?? 0),
+    cabinCrew: Number(operation.cabinCrew ?? flightSnapshot.cabinCrewCount ?? 0),
+    specialPassengerCount: Number(operation.specialPassengerCount || 0),
+    allowOverCapacity: Boolean(operation.allowOverCapacity),
+    overCapacityReason: operation.overCapacityReason || "",
+    operationalRemarks: operation.operationalRemarks || flightSnapshot.remarks || "",
+    kot: operation.kot || operation.status || "Draft",
+    meal: operation.meal || "not started",
+    dispatch: operation.dispatch || "pending",
+    production: operation.production || "pending",
+    kitchenStatus: operation.kitchenStatus || "Pending",
+    configurationStatus: operation.configurationStatus || "Ready",
+    configurationMessages: Array.isArray(operation.configurationMessages) ? operation.configurationMessages : [],
+    invoiceLineSnapshot: Array.isArray(operation.invoiceLineSnapshot) ? operation.invoiceLineSnapshot : [],
+    auditTrail: Array.isArray(operation.auditTrail) ? operation.auditTrail : []
+  };
+  return refreshOperationFromMasters(next, sourceState, true, Boolean(next.kotSnapshot));
+}
+
+function refreshOperationFromMasters(operationOrId, sourceState = state, silent = false, preserveLocked = false) {
+  const operation = typeof operationOrId === "string" ? getDailyOperationById(operationOrId, sourceState) : operationOrId;
+  if (!operation || (preserveLocked && isKotLocked(operation))) return operation;
+  const flightMaster = sourceState.masters.flights.find((flight) => flight.id === operation.flightMasterId);
+  if (!flightMaster) return operation;
+  const mapping = resolveMenuMapping(operation.operationDate, flightMaster, sourceState);
+  const menu = mapping ? sourceState.masters.menus.find((item) => item.id === mapping.menuId) : null;
+  const loadingSheet = resolveLoadingSheet(operation.operationDate, flightMaster, menu, mapping, sourceState);
+  const ancillaries = resolveApplicableAncillaries(operation.operationDate, flightMaster, sourceState);
+  operation.flightSnapshot = createSnapshot(flightMaster);
+  operation.mappingId = mapping?.id || "";
+  operation.mappingSnapshot = mapping ? createSnapshot(mapping) : null;
+  operation.menuId = menu?.id || "";
+  operation.menuSnapshot = menu ? createSnapshot(menu) : null;
+  operation.loadingSheetId = loadingSheet?.id || "";
+  operation.loadingSheetSnapshot = loadingSheet ? createSnapshot(loadingSheet) : null;
+  operation.ancillaryItemIds = ancillaries.map((item) => item.id);
+  operation.ancillarySnapshots = ancillaries.map(createSnapshot);
+  const validation = validateOperationConfiguration(operation);
+  operation.configurationStatus = validation.status;
+  operation.configurationMessages = validation.messages;
+  operation.refreshedAt = nowStamp();
+  if (!silent) {
+    operation.auditTrail = [...(operation.auditTrail || []), "Masters refreshed into draft operation."].slice(-10);
+    logAudit("Masters refreshed into draft operation", "DailyOperation", operation.id, operation.flightSnapshot.flightNumber);
+  }
+  hydrateOperationFacade(operation);
+  return operation;
+}
+
+function resolveMenuMapping(operationDate, flightMaster, sourceState = state) {
+  return (sourceState.masters?.flightMenuMappings || [])
+    .filter((mapping) => mapping.status === "Active")
+    .filter((mapping) => mapping.flightMasterId === flightMaster.id)
+    .filter((mapping) => isDateWithinRange(operationDate, mapping.effectiveFrom, mapping.effectiveTo))
+    .sort((a, b) => Number(a.priority || 99) - Number(b.priority || 99))[0] || null;
+}
+
+function resolveLoadingSheet(operationDate, flightMaster, menu, mapping, sourceState = state) {
+  if (!menu) return null;
+  const day = dayName(operationDate);
+  return (sourceState.masters?.loadingSheets || [])
+    .filter((sheet) => sheet.status === "Active")
+    .filter((sheet) => sheet.flightMasterId === flightMaster.id)
+    .filter((sheet) => sheet.menuId === menu.id)
+    .filter((sheet) => !mapping?.serviceSequence || !sheet.serviceSequence || String(sheet.serviceSequence) === String(mapping.serviceSequence))
+    .filter((sheet) => !sheet.daysOfOperation?.length || sheet.daysOfOperation.includes(day))
+    .filter((sheet) => isDateWithinRange(operationDate, sheet.effectiveFrom, sheet.effectiveTo))
+    .sort((a, b) => Number(b.version || 0) - Number(a.version || 0))[0] || null;
+}
+
+function resolveApplicableAncillaries(operationDate, flightMaster, sourceState = state) {
+  return (sourceState.masters?.ancillaryItems || [])
+    .filter((item) => item.status === "Active")
+    .filter((item) => isDateWithinRange(operationDate, item.effectiveFrom || "1900-01-01", item.effectiveTo || "2999-12-31"))
+    .filter((item) => {
+      const app = item.applicability || {};
+      if (app.type === "selected_airline") return app.airline === flightMaster.airline;
+      if (app.type === "selected_flight") return app.flightMasterId === flightMaster.id;
+      if (app.type === "selected_route") return app.route === flightMaster.sector;
+      if (app.type === "selected_aircraft_type") return app.aircraftType === flightMaster.aircraftType;
+      return true;
+    });
+}
+
+function validateOperationConfiguration(operation) {
+  const messages = [];
+  if (!operation.flightSnapshot || operation.flightSnapshot.status !== "Active") messages.push("Inactive Master");
+  if (!operation.mappingSnapshot) messages.push("Missing Menu Mapping");
+  if (!operation.menuSnapshot) messages.push("Missing Menu");
+  if (operation.menuSnapshot && !operation.menuSnapshot.lines?.some((line) => line.status === "Active")) messages.push("No active menu lines");
+  if (!operation.loadingSheetSnapshot) messages.push("Missing Loading Sheet");
+  if (operation.menuSnapshot?.lines?.some((line) => Number(line.unitPrice || 0) <= 0)) messages.push("Missing Pricing");
+  if (operation.loadingSheetSnapshot?.lines?.some((line) => !isValidLoadingLine(line))) messages.push("Invalid Ratios");
+  return { status: configStatusFromMessages(messages), messages };
+}
+
+function configStatusFromMessages(messages) {
+  if (!messages.length) return "Ready";
+  if (messages.includes("Inactive Master")) return "Inactive Master";
+  if (messages.includes("Missing Menu Mapping")) return "Missing Menu Mapping";
+  if (messages.includes("Missing Menu") || messages.includes("No active menu lines")) return "Missing Menu";
+  if (messages.includes("Missing Loading Sheet")) return "Missing Loading Sheet";
+  if (messages.includes("Missing Pricing")) return "Missing Pricing";
+  if (messages.includes("Invalid Ratios")) return "Invalid Ratios";
+  return messages[0];
+}
+
+function createSnapshot(record) {
+  return structuredClone(record);
+}
+
+function createOperationSnapshot(operation) {
+  const plan = calculateOperationalPlan(operation);
+  const kotId = operation.kotId || generateId("kot", `${operation.operationDate}-${operation.id}`);
+  const kotNumber = operation.kotNumber || `KOT-${String((state.dailyOperations || []).findIndex((item) => item.id === operation.id) + 1 || 1).padStart(4, "0")}`;
+  return {
+    kotId,
+    kotNumber,
+    operationId: operation.id,
+    operationDate: operation.operationDate,
+    flightMasterId: operation.flightMasterId,
+    flightSnapshot: createSnapshot(operation.flightSnapshot),
+    mappingId: operation.mappingId,
+    mappingSnapshot: createSnapshot(operation.mappingSnapshot),
+    menuId: operation.menuId,
+    menuSnapshot: createSnapshot(operation.menuSnapshot),
+    loadingSheetId: operation.loadingSheetId,
+    loadingSheetSnapshot: createSnapshot(operation.loadingSheetSnapshot),
+    ancillaryItemIds: [...(operation.ancillaryItemIds || [])],
+    ancillarySnapshots: createSnapshot(operation.ancillarySnapshots || []),
+    productionPlanSnapshot: createSnapshot(plan),
+    invoiceLineSnapshot: createSnapshot(plan.invoiceLines || []),
+    confirmedAt: nowStamp(),
+    confirmedBy: "operations1"
+  };
+}
+
+function getDailyOperationById(id, sourceState = state) {
+  return sourceState.dailyOperations?.find((operation) => operation.id === id || operation.operationId === id);
+}
+
+function normalizeChallanRecord(record) {
+  return {
+    ...record,
+    challanId: record.challanId || record.id || generateId("challan"),
+    challanNumber: record.challanNumber || record.number || "",
+    status: normalizeChallanStatus(record.status || "Generated"),
+    generatedAt: record.generatedAt || nowStamp(),
+    mealLinesSnapshot: Array.isArray(record.mealLinesSnapshot) ? record.mealLinesSnapshot : [],
+    specialMealLinesSnapshot: Array.isArray(record.specialMealLinesSnapshot) ? record.specialMealLinesSnapshot : [],
+    ancillaryLinesSnapshot: Array.isArray(record.ancillaryLinesSnapshot) ? record.ancillaryLinesSnapshot : []
+  };
+}
+
+function normalizeInvoiceRecord(record) {
+  return {
+    ...record,
+    invoiceId: record.invoiceId || record.id || generateId("invoice"),
+    invoiceNumber: record.invoiceNumber || record.number || "",
+    status: record.status || "Generated",
+    mealInvoiceLinesSnapshot: Array.isArray(record.mealInvoiceLinesSnapshot) ? record.mealInvoiceLinesSnapshot : [],
+    ancillaryInvoiceLinesSnapshot: Array.isArray(record.ancillaryInvoiceLinesSnapshot) ? record.ancillaryInvoiceLinesSnapshot : []
+  };
+}
+
+function getKotById(kotId, sourceState = state) {
+  return (sourceState.dailyOperations || []).map((operation) => operation.kotSnapshot).find((snapshot) => snapshot?.kotId === kotId);
+}
+
+function getChallanById(challanId, sourceState = state) {
+  return (sourceState.challans || []).find((challan) => challan.challanId === challanId || challan.id === challanId);
+}
+
+function getChallanForOperation(operationId, sourceState = state) {
+  return (sourceState.challans || []).find((challan) => challan.sourceOperationId === operationId);
+}
+
+function selectedChallan() {
+  const flight = selectedFlight();
+  const challan = getChallanById(state.selectedChallanId) || getChallanForOperation(flight?.id);
+  if (challan) {
+    state.selectedChallanId = challan.challanId;
+    state.kot.challanNo = challan.challanNumber;
+  }
+  return challan || null;
+}
+
+function getInvoiceById(invoiceId, sourceState = state) {
+  return (sourceState.invoices || []).find((invoice) => invoice.invoiceId === invoiceId || invoice.id === invoiceId);
+}
+
+function getInvoiceForChallan(challanId, sourceState = state) {
+  return (sourceState.invoices || []).find((invoice) => invoice.sourceChallanId === challanId);
+}
+
+function selectedInvoice() {
+  const challan = selectedChallan();
+  const invoice = getInvoiceById(state.selectedInvoiceId) || (challan ? getInvoiceForChallan(challan.challanId) : null);
+  if (invoice) state.selectedInvoiceId = invoice.invoiceId;
+  return invoice || null;
+}
+
+function normalizeChallanStatus(status) {
+  const text = titleCase(status);
+  if (["Draft", "Generated", "Checked", "Approved", "Dispatched", "Locked"].includes(text)) return text;
+  if (text === "Prepared") return "Checked";
+  return text || "Generated";
+}
+
+function isChallanInvoiceReady(challan) {
+  return ["Approved", "Dispatched", "Locked"].includes(normalizeChallanStatus(challan?.status));
+}
+
+function createChallanNumber() {
+  return `CH-${state.operatingDate.replace(/-/g, "")}-${String((state.challans || []).length + 1).padStart(4, "0")}`;
+}
+
+function createInvoiceNumber(challan) {
+  return `INV-${String(challan.challanNumber || "CH").replace(/[^A-Z0-9]/gi, "")}`;
+}
+
+function validateChallanGeneration(operation) {
+  const errors = [];
+  if (!operation) errors.push("No KOT exists for the selected operation.");
+  if (operation && !operation.kotSnapshot) errors.push("KOT is not confirmed.");
+  if (operation && operation.kotSnapshot && !["Confirmed", "Sent to Kitchen", "In Progress", "Prepared", "Approved", "Dispatched"].includes(operation.kot)) errors.push("KOT status is not ready for challan generation.");
+  const plan = operation?.kotSnapshot?.productionPlanSnapshot;
+  if (operation?.kotSnapshot && (!plan || !Array.isArray(plan.mealLines) || !plan.mealLines.length)) errors.push("KOT quantity snapshot is incomplete.");
+  if (operation && getChallanForOperation(operation.id)) errors.push("Challan already exists for this KOT. Open the existing challan instead.");
+  return unique(errors);
+}
+
+function generateChallanFromKot(operation) {
+  const errors = validateChallanGeneration(operation);
+  if (errors.length) return { ok: false, errors };
+  const kot = createSnapshot(operation.kotSnapshot);
+  const plan = kot.productionPlanSnapshot;
+  const challan = normalizeChallanRecord({
+    challanId: generateId("challan", kot.kotId || operation.id),
+    challanNumber: createChallanNumber(),
+    sourceOperationId: operation.id,
+    sourceKotId: kot.kotId,
+    sourceKotNumber: kot.kotNumber,
+    sourceKotSnapshot: kot,
+    operationDate: kot.operationDate,
+    flightSnapshot: createSnapshot(kot.flightSnapshot),
+    menuSnapshot: createSnapshot(kot.menuSnapshot),
+    loadingSheetSnapshot: createSnapshot(kot.loadingSheetSnapshot),
+    passengerSnapshot: {
+      confirmedPax: operation.confirmedPax,
+      additionalPax: operation.additionalPax,
+      finalPax: plan.finalPax,
+      businessPax: operation.businessPax,
+      premiumEconomyPax: operation.premiumEconomyPax,
+      economyPax: operation.economyPax,
+      technicalCrew: operation.technicalCrew,
+      cabinCrew: operation.cabinCrew,
+      crewCount: plan.crew
+    },
+    mealLinesSnapshot: createSnapshot(plan.mealLines || []),
+    specialMealLinesSnapshot: createSnapshot(plan.specialMealLines || []),
+    ancillaryLinesSnapshot: createSnapshot(plan.ancillaryLines || plan.ancillaries || []),
+    totalsSnapshot: {
+      standardMeals: plan.standardMeals,
+      specialMeals: plan.specialMeals,
+      crewMeals: plan.crew,
+      totalMeals: plan.totalMeals,
+      totalAncillaryQuantity: plan.totalAncillaryQuantity,
+      deliveredTotal: plan.deliveredTotal
+    },
+    remarks: operation.operationalRemarks || "",
+    preparedBy: "operations1",
+    checkedBy: "",
+    deliveredBy: "",
+    receivedBy: "",
+    generatedAt: nowStamp(),
+    status: "Generated"
+  });
+  state.challans.push(challan);
+  state.selectedChallanId = challan.challanId;
+  state.kot.challanNo = challan.challanNumber;
+  operation.challanId = challan.challanId;
+  operation.challanNumber = challan.challanNumber;
+  operation.dispatch = "pending";
+  logAudit("Challan generated", "Delivery Challan", challan.challanId, `${challan.challanNumber} from ${kot.kotNumber}`);
+  return { ok: true, challan };
+}
+
+function updateChallanStatus(status) {
+  const challan = selectedChallan();
+  if (!challan) {
+    showToast("Generate a challan first.");
+    return;
+  }
+  challan.status = normalizeChallanStatus(status);
+  const operation = getDailyOperationById(challan.sourceOperationId);
+  if (operation) {
+    operation.dispatch = challan.status === "Dispatched" || challan.status === "Locked" ? "dispatched" : operation.dispatch;
+    operation.production = challan.status === "Approved" ? "approved" : challan.status === "Dispatched" || challan.status === "Locked" ? "dispatched" : operation.production;
+    operation.kot = ["Approved", "Dispatched", "Locked"].includes(challan.status) ? "Sent to Kitchen" : operation.kot;
+  }
+  const actorField = status === "Checked" ? "checkedBy" : status === "Dispatched" ? "deliveredBy" : "";
+  if (actorField) challan[actorField] = "operations1";
+  logAudit(`Challan ${challan.status.toLowerCase()}`, "Delivery Challan", challan.challanId, challan.challanNumber);
+  saveState();
+  render();
+  showToast(`${challan.challanNumber} marked ${challan.status}.`);
+}
+
+function buildMealInvoiceLines(challan) {
+  const menu = challan.menuSnapshot || {};
+  const currency = menu.currency || "USD";
+  const menuLines = menu.lines || [];
+  return (challan.mealLinesSnapshot || []).filter((line) => Number(line.qty || 0) > 0).map((line) => {
+    const menuLine = menuLines.find((item) => item.id === line.menuLineId || item.itemCode === line.code) || {};
+    const unitRate = Number(menuLine.unitPrice ?? line.rate);
+    const taxPercentage = Number(menuLine.taxPercentage ?? line.taxPercentage);
+    const quantity = Number(line.qty || 0);
+    const lineAmount = quantity * unitRate;
+    const taxAmount = lineAmount * taxPercentage / 100;
+    return {
+      sourceMasterId: menuLine.id || line.menuLineId || line.sourceMasterId,
+      itemCode: menuLine.invoiceItemCode || line.rateCode || menuLine.itemCode || line.code,
+      description: menuLine.itemName || line.name,
+      unit: menuLine.unit || line.unit || "Pax",
+      quantity,
+      unitRate,
+      taxPercentage,
+      currency,
+      lineAmount,
+      taxAmount,
+      lineTotal: lineAmount + taxAmount
+    };
+  });
+}
+
+function buildAncillaryInvoiceLines(challan) {
+  return (challan.ancillaryLinesSnapshot || []).filter((line) => line.invoiceEnabled).filter((line) => Number(line.finalQuantity ?? line.qty ?? 0) > 0).map((line) => {
+    const quantity = Number(line.finalQuantity ?? line.qty ?? 0);
+    const unitRate = Number(line.unitRate ?? line.invoiceRate);
+    const taxPercentage = Number(line.taxPercentage || 0);
+    const lineAmount = quantity * unitRate;
+    const taxAmount = lineAmount * taxPercentage / 100;
+    return {
+      sourceMasterId: line.sourceMasterId,
+      itemCode: line.invoiceItemCode || line.itemCode,
+      description: line.itemName || line.item,
+      unit: line.unit,
+      quantity,
+      unitRate,
+      taxPercentage,
+      currency: line.currency || challan.menuSnapshot?.currency || "USD",
+      lineAmount,
+      taxAmount,
+      lineTotal: lineAmount + taxAmount
+    };
+  });
+}
+
+function calculateInvoiceTotals(lines) {
+  return {
+    subtotal: lines.reduce((sum, line) => sum + Number(line.lineAmount || 0), 0),
+    taxTotal: lines.reduce((sum, line) => sum + Number(line.taxAmount || 0), 0),
+    grandTotal: lines.reduce((sum, line) => sum + Number(line.lineTotal || 0), 0)
+  };
+}
+
+function validateInvoiceGeneration(challan) {
+  const errors = [];
+  if (!challan) errors.push("No delivery challan is selected.");
+  if (challan && !isChallanInvoiceReady(challan)) errors.push("Invoice can be generated only from an approved, dispatched, or locked challan.");
+  if (challan && getInvoiceForChallan(challan.challanId)) errors.push("Invoice already exists for this challan. Use View Invoice.");
+  if (!challan) return errors;
+  const lines = [...buildMealInvoiceLines(challan), ...buildAncillaryInvoiceLines(challan)];
+  if (!lines.length) errors.push("No billable meal or ancillary lines are available.");
+  lines.forEach((line) => {
+    if (line.unitRate === undefined || Number.isNaN(line.unitRate)) errors.push(`${line.itemCode} rate is missing.`);
+    if (Number(line.unitRate) <= 0) errors.push(`${line.itemCode} rate is missing or zero.`);
+    if (Number.isNaN(line.taxPercentage) || line.taxPercentage < 0 || line.taxPercentage > 100) errors.push(`${line.itemCode} tax percentage is invalid.`);
+  });
+  const currencies = unique(lines.map((line) => line.currency || "USD"));
+  if (currencies.length > 1) errors.push("Mixed currencies are present. Keep one currency before invoice generation.");
+  return unique(errors);
+}
+
+function generateInvoiceFromChallan(challan) {
+  const errors = validateInvoiceGeneration(challan);
+  if (errors.length) return { ok: false, errors };
+  const mealLines = buildMealInvoiceLines(challan);
+  const ancillaryLines = buildAncillaryInvoiceLines(challan);
+  const allLines = [...mealLines, ...ancillaryLines];
+  const totals = calculateInvoiceTotals(allLines);
+  const invoice = normalizeInvoiceRecord({
+    invoiceId: generateId("invoice", challan.challanId),
+    invoiceNumber: createInvoiceNumber(challan),
+    invoiceDate: state.operatingDate,
+    sourceChallanId: challan.challanId,
+    sourceChallanNumber: challan.challanNumber,
+    sourceOperationId: challan.sourceOperationId,
+    sourceKotId: challan.sourceKotId,
+    flightSnapshot: createSnapshot(challan.flightSnapshot),
+    menuSnapshot: createSnapshot(challan.menuSnapshot),
+    loadingSheetSnapshot: createSnapshot(challan.loadingSheetSnapshot),
+    mealInvoiceLinesSnapshot: createSnapshot(mealLines),
+    ancillaryInvoiceLinesSnapshot: createSnapshot(ancillaryLines),
+    subtotal: totals.subtotal,
+    taxTotal: totals.taxTotal,
+    grandTotal: totals.grandTotal,
+    currency: allLines[0]?.currency || "USD",
+    generatedAt: nowStamp(),
+    status: "Generated",
+    notes: "Generated from delivery challan snapshot."
+  });
+  state.invoices.push(invoice);
+  state.selectedInvoiceId = invoice.invoiceId;
+  state.invoice = {
+    status: "generated",
+    number: invoice.invoiceNumber,
+    generatedAt: invoice.generatedAt,
+    sourceChallanNo: challan.challanNumber,
+    sourceFlightNo: challan.flightSnapshot?.flightNumber || "",
+    setupAt: invoice.generatedAt
+  };
+  logAudit("Invoice generated", "Invoice", invoice.invoiceId, `${invoice.invoiceNumber} from ${challan.challanNumber}`);
+  return { ok: true, invoice };
+}
+
+function dayName(date) {
+  return ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][new Date(`${date}T00:00:00`).getDay()];
+}
+
+function nowStamp() {
+  return new Date().toISOString().slice(0, 16).replace("T", " ");
+}
+
+function defaultSpecialMeals() {
+  return { AVML: 0, BBML: 0, CHML: 0, FPML: 0, GFML: 0, HNML: 0, LCML: 0, LSML: 0, MOML: 0, VGML: 0, VLML: 0 };
+}
+
+function isKotLocked(operation) {
+  return ["Confirmed", "Sent to Kitchen", "In Progress", "Prepared", "Approved", "Dispatched"].includes(operation.kot) || Boolean(operation.kotSnapshot);
+}
+
+function hydrateOperationFacade(operation) {
+  const flight = operation.flightSnapshot || {};
+  const menu = operation.menuSnapshot || {};
+  operation.flightNo = flight.flightNumber || operation.flightNo || "";
+  operation.airline = flight.airline || "";
+  operation.airlineClass = String(flight.airline || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  operation.sector = flight.sector || "";
+  operation.origin = flight.origin || "";
+  operation.destination = flight.destination || "";
+  operation.std = flight.scheduledDeparture || "";
+  operation.arrivalTime = flight.scheduledArrival || "";
+  operation.aircraft = flight.aircraftType || "";
+  operation.reg = flight.defaultRegistration || "";
+  operation.capacity = Number(flight.totalPassengerCapacity || 0);
+  operation.j = Number(operation.businessPax || 0);
+  operation.w = Number(operation.premiumEconomyPax || 0);
+  operation.y = Number(operation.economyPax || 0);
+  operation.tc = Number(operation.technicalCrew || 0);
+  operation.cc = Number(operation.cabinCrew || 0);
+  operation.menu = menu.menuCycle || menu.menuCode || "-";
+  operation.mealPlan = menu.menuName || menu.menuCode || "Unassigned";
+  operation.ratioRule = operation.loadingSheetSnapshot?.loadingSheetCode || "Master loading sheet";
+  operation.roundingRule = "Largest remainder for percentage splits; configured rounding for loading lines.";
+  operation.specialMealRule = "Replacement special meals are included inside final pax unless marked as additional uplift.";
+  operation.operatingDays = flight.operatingDays || [];
+  operation.status = operation.kot;
+  return operation;
+}
+
+function normalizeFlightMasterRecord(record) {
+  const next = { ...record };
+  next.id = next.id || generateId("flt");
+  next.operatingDays = Array.isArray(next.operatingDays) ? next.operatingDays : [];
+  next.sector = next.sector || `${next.origin || ""} - ${next.destination || ""}`.trim();
+  next.status = next.status || "Active";
+  next.businessCapacity = Number(next.businessCapacity || 0);
+  next.premiumEconomyCapacity = Number(next.premiumEconomyCapacity || 0);
+  next.economyCapacity = Number(next.economyCapacity || 0);
+  next.totalPassengerCapacity = Number(next.totalPassengerCapacity || next.businessCapacity + next.premiumEconomyCapacity + next.economyCapacity);
+  next.technicalCrewCount = Number(next.technicalCrewCount || 0);
+  next.cabinCrewCount = Number(next.cabinCrewCount || 0);
+  return next;
+}
+
+function normalizeMenuRecord(record) {
+  const next = { ...record };
+  next.id = next.id || generateId("menu");
+  next.cabinClasses = Array.isArray(next.cabinClasses) ? next.cabinClasses : String(next.cabinClasses || "").split(",").map((item) => item.trim()).filter(Boolean);
+  next.lines = Array.isArray(next.lines) ? next.lines.map((line, index) => ({ ...line, id: line.id || generateId("mlin", index), status: line.status || "Active", displaySequence: Number(line.displaySequence || index + 1), unitPrice: Number(line.unitPrice || 0), taxPercentage: Number(line.taxPercentage || 0) })) : [];
+  next.status = next.status || "Active";
+  return next;
+}
+
+function normalizeMappingRecord(record) {
+  return { ...record, id: record.id || generateId("map"), priority: Number(record.priority || 1), status: record.status || "Active" };
+}
+
+function normalizeAncillaryRecord(record) {
+  return {
+    ...record,
+    id: record.id || generateId("anc"),
+    unitRate: Number(record.unitRate || 0),
+    taxPercentage: Number(record.taxPercentage || 0),
+    invoiceEnabled: Boolean(record.invoiceEnabled),
+    status: record.status || "Active",
+    applicability: record.applicability || { type: "all_airlines", airline: "", flightMasterId: "", route: "", aircraftType: "" },
+    calculationRule: {
+      calculationType: "manual",
+      quantityPerPax: 0,
+      paxDivisor: 0,
+      fixedQuantity: 0,
+      bufferPercentage: 0,
+      minimumQuantity: 0,
+      maximumQuantity: null,
+      roundingMethod: "ceil",
+      allowOperationalOverride: true,
+      ...(record.calculationRule || {})
+    }
+  };
+}
+
+function normalizeLoadingSheetRecord(record) {
+  const next = { ...record };
+  next.id = next.id || generateId("load");
+  next.daysOfOperation = Array.isArray(next.daysOfOperation) ? next.daysOfOperation : [];
+  next.lines = Array.isArray(next.lines) ? next.lines.map((line, index) => ({ ...line, id: line.id || generateId("lsln", index), displaySequence: Number(line.displaySequence || index + 1) })) : [];
+  next.status = next.status || "Active";
+  return next;
+}
+
 function loadState() {
   const raw = localStorage.getItem(STORAGE_KEY);
-  if (!raw) return structuredClone(seed);
+  const legacyRaw = !raw ? localStorage.getItem(LEGACY_STORAGE_KEY) : null;
+  if (!raw && !legacyRaw) return createSeedState();
   try {
-    return { ...structuredClone(seed), ...JSON.parse(raw) };
+    return migrateState(JSON.parse(raw || legacyRaw));
   } catch {
-    return structuredClone(seed);
+    return createSeedState();
   }
 }
 
 function normalizeState() {
+  state.version = STATE_VERSION;
   state.queueFilters = { ...structuredClone(seed.queueFilters), ...(state.queueFilters || {}) };
   state.invoice = { ...structuredClone(seed.invoice), ...(state.invoice || {}) };
   state.loadingChart = { ...structuredClone(seed.loadingChart), ...(state.loadingChart || {}) };
@@ -139,9 +1081,27 @@ function normalizeState() {
   state.kotStep = Math.min(Math.max(Number(state.kotStep) || 0, 0), KOT_STEPS.length - 1);
   state.flights = Array.isArray(state.flights) && state.flights.length ? state.flights : structuredClone(seed.flights);
   state.flights.forEach(normalizeFlightPlanning);
+  state.operatingDate = state.operatingDate || "2026-06-15";
+  state.selectedFlightMasterId = state.selectedFlightMasterId || "";
+  state.selectedOperationId = state.selectedOperationId || "";
+  state.selectedMenuId = state.selectedMenuId || "";
+  state.selectedMappingId = state.selectedMappingId || "";
+  state.selectedAncillaryId = state.selectedAncillaryId || "";
+  state.selectedLoadingSheetId = state.selectedLoadingSheetId || "";
+  state.masters = normalizeMasters(state.masters, state);
+  state.dailyOperations = Array.isArray(state.dailyOperations) ? state.dailyOperations.map((operation) => normalizeDailyOperation(operation, state)) : createDailyOperations(state.flights, state.masters);
+  generateDailyOperations(state.operatingDate, state, true);
+  state.selectedOperationId = state.selectedOperationId || operationsForSelectedDate()[0]?.id || "";
+  state.challans = Array.isArray(state.challans) ? state.challans.map(normalizeChallanRecord) : [];
+  state.invoices = Array.isArray(state.invoices) ? state.invoices.map(normalizeInvoiceRecord) : [];
+  state.selectedChallanId = state.selectedChallanId || "";
+  state.selectedInvoiceId = state.selectedInvoiceId || "";
+  state.auditTrail = Array.isArray(state.auditTrail) ? state.auditTrail : [];
+  syncLegacyLoadingChart();
 }
 
 function saveState() {
+  state.version = STATE_VERSION;
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
 }
 
@@ -157,7 +1117,29 @@ function setQueueFilter(key, value) {
   render();
 }
 
+function setOperatingDate(value) {
+  state.operatingDate = value || state.operatingDate;
+  generateDailyOperations(state.operatingDate);
+  state.selectedOperationId = operationsForSelectedDate()[0]?.id || state.selectedOperationId;
+  saveState();
+  render();
+}
+
+function operationsForSelectedDate() {
+  return (state.dailyOperations || [])
+    .filter((operation) => operation.operationDate === state.operatingDate)
+    .map((operation) => hydrateOperationFacade(operation))
+    .sort((a, b) => String(a.std).localeCompare(String(b.std)));
+}
+
 function selectedFlight() {
+  const operation = getDailyOperationById(state.selectedOperationId);
+  if (operation) return hydrateOperationFacade(operation);
+  const byFlight = operationsForSelectedDate().find((item) => item.flightNo === state.selectedFlight);
+  if (byFlight) {
+    state.selectedOperationId = byFlight.id;
+    return hydrateOperationFacade(byFlight);
+  }
   return state.flights.find((flight) => flight.flightNo === state.selectedFlight) || state.flights[0];
 }
 
@@ -223,12 +1205,15 @@ function planningTemplateFor(flight) {
 function updateFlightField(key, value) {
   const flight = selectedFlight();
   if (!flight) return;
-  flight[key] = key.includes("Pax") || key === "capacity" ? Number(value) || 0 : value;
-  normalizeFlightPlanning(flight);
+  const numericKeys = ["confirmedPax", "additionalPax", "businessPax", "premiumEconomyPax", "economyPax", "technicalCrew", "cabinCrew", "specialPassengerCount"];
+  flight[key] = numericKeys.includes(key) || key.includes("Pax") || key === "capacity" ? Number(value) || 0 : value;
+  if (flight.flightSnapshot) hydrateOperationFacade(flight);
+  else normalizeFlightPlanning(flight);
   syncKotSnapshot(flight);
-  if (["confirmedPax", "additionalPax", "operationalRemarks"].includes(key) && flight.kot !== "confirmed") {
-    flight.kot = "in progress";
+  if (["confirmedPax", "additionalPax", "businessPax", "premiumEconomyPax", "economyPax", "technicalCrew", "cabinCrew", "specialPassengerCount", "operationalRemarks"].includes(key) && !isKotLocked(flight)) {
+    flight.kot = flight.flightSnapshot ? "Draft" : "in progress";
   }
+  if (flight.flightSnapshot) logAudit("Passenger count updated", "DailyOperation", flight.id, key);
   saveState();
   render();
 }
@@ -244,6 +1229,20 @@ function updateMenuSplit(index, key, value) {
 
 function updateAncillary(index, key, value) {
   const flight = selectedFlight();
+  if (flight?.flightSnapshot) {
+    const item = flight.ancillarySnapshots[index];
+    if (!item) return;
+    flight.ancillaryOverrides[item.id] = {
+      ...(flight.ancillaryOverrides[item.id] || {}),
+      [key]: key === "overrideQuantity" ? Number(value) || 0 : value,
+      updatedBy: "operations1",
+      updatedAt: nowStamp()
+    };
+    logAudit("Ancillary overridden", "DailyOperation", flight.id, item.itemCode);
+    saveState();
+    render();
+    return;
+  }
   const row = flight.ancillaryRequirements[index];
   if (!row) return;
   row[key] = key === "fixedQty" || key === "min" || key === "qtyPerPax" ? Number(value) || 0 : value;
@@ -256,17 +1255,19 @@ function updateSpecialMeal(code, value) {
   const flight = selectedFlight();
   flight.specialMeals[code] = Number(value) || 0;
   syncKotSnapshot(flight);
-  if (flight.kot !== "confirmed") flight.kot = "in progress";
+  if (flight.kot !== "confirmed" && flight.kot !== "Confirmed") flight.kot = flight.flightSnapshot ? "Draft" : "in progress";
+  if (flight.flightSnapshot) logAudit("Special meal updated", "DailyOperation", flight.id, code);
   saveState();
   render();
 }
 
 function finalPassengerCount(flight = selectedFlight()) {
+  if (flight?.flightSnapshot) return Number(flight.confirmedPax || 0) + Number(flight.additionalPax || 0);
   return Number(flight.confirmedPax || 0) + Number(flight.additionalPax || 0);
 }
 
 function crewCount(flight = selectedFlight()) {
-  return Number(flight.tc || 0) + Number(flight.cc || 0);
+  return Number(flight.technicalCrew ?? flight.tc ?? 0) + Number(flight.cabinCrew ?? flight.cc ?? 0);
 }
 
 function specialMealTotal(flight = selectedFlight()) {
@@ -283,7 +1284,282 @@ function parseRatioPercent(ratio) {
   return Number(text) || 0;
 }
 
+function largestRemainderRound(lines, targetTotal) {
+  const rawRows = lines.map((line, index) => {
+    const raw = Number(line.raw || 0);
+    return { ...line, index, qty: Math.floor(raw), remainder: raw - Math.floor(raw) };
+  });
+  let remaining = Math.max(0, Number(targetTotal || 0) - rawRows.reduce((sum, row) => sum + row.qty, 0));
+  rawRows
+    .slice()
+    .sort((a, b) => b.remainder - a.remainder || a.index - b.index)
+    .forEach((row) => {
+      if (remaining <= 0) return;
+      rawRows[row.index].qty += 1;
+      remaining -= 1;
+    });
+  return rawRows.map(({ remainder, raw, index, ...row }) => row);
+}
+
+function calculateOperationalPlan(operation = selectedFlight()) {
+  if (!operation?.flightSnapshot) return legacyOperationalPlan(operation);
+  const finalPax = finalPassengerCount(operation);
+  const replacementSpecialMealCount = specialMealEntries(operation).filter((row) => !row.additionalUplift).reduce((sum, row) => sum + row.quantity, 0);
+  const additionalUpliftCount = specialMealEntries(operation).filter((row) => row.additionalUplift).reduce((sum, row) => sum + row.quantity, 0);
+  const standardMealPassengerCount = Math.max(0, finalPax - replacementSpecialMealCount);
+  const loadingLines = operation.loadingSheetSnapshot?.lines || [];
+  const percentageLines = loadingLines.filter((line) => line.ratioType === "percentage_split");
+  const mealLines = loadingLines.map((line) => {
+    const menuLine = operation.menuSnapshot?.lines?.find((item) => item.id === line.menuLineId || item.itemCode === line.menuItemCode) || {};
+    const calculatedQuantity = percentageLines.includes(line)
+      ? 0
+      : calculateLoadingSheetLine(line, operation, standardMealPassengerCount);
+    return {
+      sourceMasterId: line.id,
+      menuLineId: line.menuLineId,
+      code: line.menuItemCode || menuLine.itemCode || "-",
+      type: line.category || menuLine.category || operation.menuSnapshot?.serviceType || "Meal",
+      name: line.menuItemName || menuLine.itemName || "-",
+      unit: line.unit || menuLine.unit || "Pax",
+      ratio: line.ratioValue || loadingRatioLabel(line.ratioType),
+      ratioType: line.ratioType,
+      qty: calculatedQuantity,
+      rateCode: menuLine.invoiceItemCode || menuLine.itemCode || line.menuItemCode || "-",
+      rate: Number(menuLine.unitPrice || 0),
+      taxPercentage: Number(menuLine.taxPercentage || 0),
+      calculationRule: createSnapshot(line)
+    };
+  });
+  if (percentageLines.length) {
+    const rounded = largestRemainderRound(percentageLines.map((line) => ({
+      sourceMasterId: line.id,
+      raw: standardMealPassengerCount * (Number(line.ratioValue || 0) / 100)
+    })), standardMealPassengerCount);
+    rounded.forEach((roundedLine) => {
+      const target = mealLines.find((line) => line.sourceMasterId === roundedLine.sourceMasterId);
+      if (target) target.qty = roundedLine.qty;
+    });
+  }
+  const specialMealLines = specialMealEntries(operation).filter((row) => row.quantity > 0);
+  const ancillaryLines = (operation.ancillarySnapshots || []).map((item) => calculateAncillaryQuantity(item, operation));
+  const validations = operationValidationMessages(operation, { finalPax, replacementSpecialMealCount, ancillaryLines });
+  const totalMealQuantity = mealLines.reduce((sum, line) => sum + Number(line.qty || 0), 0) + specialMealLines.reduce((sum, line) => sum + line.quantity, 0);
+  const totalAncillaryQuantity = ancillaryLines.reduce((sum, line) => sum + Number(line.finalQuantity || 0), 0);
+  const invoiceLines = [
+    ...mealLines.map((line) => ({ code: line.rateCode, desc: line.name, uom: line.unit, qty: line.qty, rate: line.rate, taxPercentage: line.taxPercentage, sourceMasterId: line.menuLineId })),
+    ...specialMealLines.map((line) => ({ code: `SPML-${line.code}`, desc: `${line.code} ${line.description}`, uom: "Pax", qty: line.quantity, rate: 8.64, taxPercentage: 10, sourceMasterId: line.code })),
+    ...ancillaryLines.filter((line) => line.invoiceEnabled).map((line) => ({ code: line.invoiceItemCode || line.itemCode, desc: line.itemName, uom: line.unit, qty: line.finalQuantity, rate: line.unitRate, taxPercentage: line.taxPercentage, sourceMasterId: line.sourceMasterId }))
+  ];
+  return {
+    finalPassengerCount: finalPax,
+    finalPax,
+    standardMealPassengerCount,
+    specialMealCount: replacementSpecialMealCount,
+    additionalUpliftCount,
+    crewCount: crewCount(operation),
+    crew: crewCount(operation),
+    mealLines,
+    meals: mealLines,
+    specialMealLines,
+    ancillaryLines,
+    ancillaries: ancillaryLines.map((line) => ({ item: line.itemName, unit: line.unit, rule: line.masterCalculationRule, qty: line.finalQuantity, ...line })),
+    totalMealQuantity,
+    totalAncillaryQuantity,
+    totalMeals: totalMealQuantity,
+    specialMeals: replacementSpecialMealCount + additionalUpliftCount,
+    standardMeals: mealLines.reduce((sum, line) => sum + Number(line.qty || 0), 0),
+    deliveredTotal: totalMealQuantity + totalAncillaryQuantity,
+    validations,
+    invoiceLines,
+    calculatedAt: nowStamp()
+  };
+}
+
+function legacyOperationalPlan(flight) {
+  const meals = calculatedMealBreakdown(flight);
+  const ancillaries = calculatedAncillaries(flight);
+  const finalPax = finalPassengerCount(flight);
+  const spml = specialMealTotal(flight);
+  const standardMeals = meals.reduce((sum, item) => sum + item.qty, 0);
+  return {
+    finalPassengerCount: finalPax,
+    finalPax,
+    standardMealPassengerCount: Math.max(finalPax - spml, 0),
+    specialMealCount: spml,
+    additionalUpliftCount: 0,
+    crewCount: crewCount(flight),
+    crew: crewCount(flight),
+    mealLines: meals,
+    meals,
+    specialMealLines: [],
+    ancillaryLines: ancillaries,
+    ancillaries,
+    totalMealQuantity: standardMeals + spml,
+    totalAncillaryQuantity: ancillaries.reduce((sum, item) => sum + item.qty, 0),
+    totalMeals: standardMeals + spml,
+    specialMeals: spml,
+    standardMeals,
+    deliveredTotal: standardMeals + spml + ancillaries.reduce((sum, item) => sum + item.qty, 0),
+    validations: [],
+    invoiceLines: [],
+    calculatedAt: nowStamp()
+  };
+}
+
+function calculateLoadingSheetLine(line, operation, standardMealPassengerCount) {
+  const capacity = {
+    business: Number(operation.businessPax || 0),
+    premium: Number(operation.premiumEconomyPax || 0),
+    economy: Number(operation.economyPax || 0),
+    crew: crewCount(operation)
+  };
+  let quantity = 0;
+  const value = Number(String(line.ratioValue || "").replace(/[^0-9.]/g, "")) || 0;
+  switch (line.ratioType) {
+    case "one_to_one":
+      quantity = standardMealPassengerCount * Number(line.quantityPerPassenger || 1);
+      break;
+    case "per_x_pax":
+      quantity = value > 0 ? standardMealPassengerCount / value : 0;
+      break;
+    case "fixed":
+      quantity = Number(line.fixedQuantity || value || 0);
+      break;
+    case "business_quantity":
+      quantity = value && String(line.ratioValue).startsWith("JH") ? Math.ceil(capacity.business / Math.max(1, value / 6)) : capacity.business || value;
+      break;
+    case "premium_economy_quantity":
+      quantity = capacity.premium || value;
+      break;
+    case "economy_quantity":
+      quantity = capacity.economy || value;
+      break;
+    case "crew_quantity":
+      quantity = capacity.crew || value;
+      break;
+    case "cabin_class_percentage":
+      quantity = Math.max(0, Math.ceil((capacity[String(line.cabinClass || "").toLowerCase()] || standardMealPassengerCount) * (value / 100)));
+      break;
+    case "minimum_plus_calculated":
+      quantity = Number(line.minimumQuantity || 0) + standardMealPassengerCount * Number(line.quantityPerPassenger || 0);
+      break;
+    case "manual_matrix":
+      quantity = value || Number(line.fixedQuantity || 0);
+      break;
+    default:
+      quantity = standardMealPassengerCount;
+  }
+  return applyQuantityBounds(quantity, line);
+}
+
+function calculateAncillaryQuantity(item, operation) {
+  const rule = item.calculationRule || {};
+  const finalPax = finalPassengerCount(operation);
+  const crew = crewCount(operation);
+  let calculatedQuantity = 0;
+  switch (rule.calculationType) {
+    case "fixed":
+      calculatedQuantity = Number(rule.fixedQuantity || 0);
+      break;
+    case "per_passenger":
+      calculatedQuantity = finalPax * Number(rule.quantityPerPax || 1);
+      break;
+    case "per_crew":
+      calculatedQuantity = crew;
+      break;
+    case "per_business_pax":
+      calculatedQuantity = Number(operation.businessPax || 0);
+      break;
+    case "per_premium_pax":
+      calculatedQuantity = Number(operation.premiumEconomyPax || 0);
+      break;
+    case "per_economy_pax":
+      calculatedQuantity = Number(operation.economyPax || 0);
+      break;
+    case "per_x_pax":
+      calculatedQuantity = finalPax / Math.max(1, Number(rule.paxDivisor || 1));
+      break;
+    case "buffer":
+      calculatedQuantity = finalPax * (1 + Number(rule.bufferPercentage || 0) / 100);
+      break;
+    case "minimum":
+      calculatedQuantity = Number(rule.minimumQuantity || 0);
+      break;
+    case "fixed_plus_per_pax":
+      calculatedQuantity = Number(rule.fixedQuantity || 0) + finalPax * Number(rule.quantityPerPax || 0);
+      break;
+    case "manual":
+    default:
+      calculatedQuantity = Number(rule.fixedQuantity || 0);
+  }
+  calculatedQuantity = applyQuantityBounds(calculatedQuantity, rule);
+  const override = operation.ancillaryOverrides?.[item.id] || {};
+  const overrideAllowed = Boolean(rule.allowOperationalOverride);
+  const finalQuantity = overrideAllowed && override.overrideQuantity !== undefined && override.overrideQuantity !== "" ? Number(override.overrideQuantity || 0) : calculatedQuantity;
+  return {
+    sourceMasterId: item.id,
+    itemCode: item.itemCode,
+    itemName: item.itemName,
+    unit: item.unit,
+    masterCalculationRule: ruleLabel(rule),
+    calculatedQuantity,
+    overrideAllowed,
+    overrideQuantity: override.overrideQuantity ?? "",
+    overrideReason: override.overrideReason || "",
+    finalQuantity,
+    qty: finalQuantity,
+    currency: item.currency || operation.menuSnapshot?.currency || "USD",
+    unitRate: Number(item.unitRate || 0),
+    taxPercentage: Number(item.taxPercentage || 0),
+    invoiceRate: Number(item.unitRate || 0),
+    invoiceEnabled: Boolean(item.invoiceEnabled),
+    invoiceItemCode: item.invoiceItemCode,
+    updatedBy: override.updatedBy || "",
+    updatedAt: override.updatedAt || ""
+  };
+}
+
+function applyQuantityBounds(quantity, rule = {}) {
+  const rounded = roundQuantity(quantity, rule.roundingMethod || "ceil");
+  const withMin = Math.max(Number(rule.minimumQuantity || 0), rounded);
+  return rule.maximumQuantity !== null && rule.maximumQuantity !== "" && rule.maximumQuantity !== undefined ? Math.min(Number(rule.maximumQuantity), withMin) : withMin;
+}
+
+function roundQuantity(value, method = "ceil") {
+  if (method === "floor") return Math.floor(value);
+  if (method === "round") return Math.round(value);
+  return Math.ceil(value);
+}
+
+function specialMealEntries(operation = selectedFlight()) {
+  const descriptions = {
+    AVML: "Asian vegetarian meal", BBML: "Baby meal", CHML: "Child meal", FPML: "Fruit platter meal", GFML: "Gluten free meal", HNML: "Hindu meal", LCML: "Low calorie meal", LSML: "Low sodium meal", MOML: "Muslim meal", VGML: "Vegetarian vegan meal", VLML: "Vegetarian lacto-ovo meal"
+  };
+  const available = { ...defaultSpecialMeals(), ...(operation.specialMeals || {}) };
+  return Object.entries(available).map(([code, quantity]) => ({ code, description: descriptions[code] || "Special meal", quantity: Number(quantity || 0), includedInPassengerCount: true, additionalUplift: false, remarks: "" }));
+}
+
+function operationValidationMessages(operation, calc = {}) {
+  const messages = [...(operation.configurationMessages || [])];
+  const finalPax = calc.finalPax ?? finalPassengerCount(operation);
+  const replacementSpecialMealCount = calc.replacementSpecialMealCount ?? specialMealTotal(operation);
+  if (finalPax > Number(operation.capacity || 0) && !operation.allowOverCapacity) messages.push("Passenger count exceeds capacity");
+  if (finalPax > Number(operation.capacity || 0) && operation.allowOverCapacity && !operation.overCapacityReason) messages.push("Passenger override reason is required");
+  if (replacementSpecialMealCount > finalPax) messages.push("Special meals exceed passenger count");
+  (calc.ancillaryLines || []).forEach((line) => {
+    if (line.overrideAllowed && line.overrideQuantity !== "" && !line.overrideReason) messages.push(`${line.itemCode} override requires reason`);
+  });
+  return unique(messages);
+}
+
+function isValidLoadingLine(line) {
+  if (!line.menuItemCode && !line.menuLineId) return false;
+  if (["per_x_pax", "percentage_split", "cabin_class_percentage"].includes(line.ratioType) && Number(line.ratioValue || 0) <= 0) return false;
+  return true;
+}
+
 function calculatedMealBreakdown(flight = selectedFlight()) {
+  if (flight?.flightSnapshot) return calculateOperationalPlan(flight).mealLines;
   const finalPax = finalPassengerCount(flight);
   const spml = specialMealTotal(flight);
   const standardCount = Math.max(finalPax - spml, 0);
@@ -306,6 +1582,7 @@ function calculatedMealBreakdown(flight = selectedFlight()) {
 }
 
 function calculatedAncillaries(flight = selectedFlight()) {
+  if (flight?.flightSnapshot) return calculateOperationalPlan(flight).ancillaries;
   const pax = finalPassengerCount(flight);
   return flight.ancillaryRequirements.map((item) => {
     const qty = item.fixedQty !== undefined ? Number(item.fixedQty) : Math.max(Number(item.min || 0), Math.ceil(pax * Number(item.qtyPerPax || 0)));
@@ -314,6 +1591,7 @@ function calculatedAncillaries(flight = selectedFlight()) {
 }
 
 function calculatedKot(flight = selectedFlight()) {
+  if (flight?.flightSnapshot) return calculateOperationalPlan(flight);
   const meals = calculatedMealBreakdown(flight);
   const ancillaries = calculatedAncillaries(flight);
   const finalPax = finalPassengerCount(flight);
@@ -333,6 +1611,49 @@ function calculatedKot(flight = selectedFlight()) {
 }
 
 function validationRows(stage, flight = selectedFlight()) {
+  if (flight?.flightSnapshot) {
+    const calc = calculatedKot(flight);
+    const rows = {
+      planning: [
+        ["Flight Master snapshot stored", Boolean(flight.flightSnapshot?.id)],
+        ["Flight-Menu Mapping resolved", Boolean(flight.mappingSnapshot)],
+        ["Menu Master snapshot stored", Boolean(flight.menuSnapshot)],
+        ["Loading Sheet snapshot stored", Boolean(flight.loadingSheetSnapshot)],
+        ["Ancillary snapshots stored", Array.isArray(flight.ancillarySnapshots)]
+      ],
+      kot: [
+        ["Final pax calculated automatically", calc.finalPax === Number(flight.confirmedPax) + Number(flight.additionalPax)],
+        ["Class-wise pax does not exceed final pax", Number(flight.businessPax || 0) + Number(flight.premiumEconomyPax || 0) + Number(flight.economyPax || 0) <= calc.finalPax],
+        ["Pax within capacity or approved override", calc.finalPax <= flight.capacity || flight.allowOverCapacity],
+        ["Crew count calculated", calc.crew >= 0],
+        ["Configuration allows KOT confirmation", flight.configurationStatus === "Ready"]
+      ],
+      special: [
+        ["Replacement special meals within final pax", specialMealTotal(flight) <= calc.finalPax],
+        ["Supported special meal codes present", Object.keys(flight.specialMeals || {}).length >= 11],
+        ["Additional uplift requires explicit justification", !calc.validations.some((item) => item.includes("Special meals exceed"))]
+      ],
+      ancillary: [
+        ["Ancillaries resolved from master", flight.ancillarySnapshots.length > 0],
+        ["Overrides limited to permitted items", calc.ancillaryLines.every((line) => line.overrideAllowed || line.overrideQuantity === "")],
+        ["Override reason provided where used", !calc.validations.some((item) => item.includes("override requires reason"))]
+      ],
+      calculation: [
+        ["Meal plan calculated from stored snapshot", calc.mealLines.length > 0],
+        ["Required pricing is present", !calc.validations.includes("Missing Pricing")],
+        ["Loading ratios are valid", !calc.validations.includes("Invalid Ratios")],
+        ["Validation checklist clear", calc.validations.length === 0]
+      ],
+      document: [
+        ["KOT confirmed before kitchen/challan", flight.kot === "Confirmed" || flight.kot === "Sent to Kitchen"],
+        ["Confirmed KOT has frozen snapshot", Boolean(flight.kotSnapshot)],
+        ["Challan generated from confirmed KOT snapshot", Boolean(getChallanForOperation(flight.id))],
+        ["Invoice lines can use stored rates", Boolean(flight.kotSnapshot?.menuSnapshot?.lines?.length)],
+        ["Production quantities preserved", Boolean(flight.productionPlanSnapshot || flight.kotSnapshot?.productionPlanSnapshot)]
+      ]
+    };
+    return rows[stage] || rows.kot;
+  }
   const calc = calculatedKot(flight);
   const ratiosTotal = flight.menuSplit.reduce((sum, item) => sum + (String(item.ratio).endsWith("%") ? Number(String(item.ratio).replace("%", "")) : 0), 0);
   const rows = {
@@ -358,10 +1679,10 @@ function validationRows(stage, flight = selectedFlight()) {
       ["Changes traceable in audit trail", flight.auditTrail.length > 0]
     ],
     document: [
-      ["KOT confirmed before kitchen/chalan", flight.kot === "confirmed"],
-      ["Chalan generated from confirmed KOT", flight.kot === "confirmed"],
-      ["Unique chalan number available", Boolean(state.kot.challanNo)],
-      ["Invoice linked to approved chalan", flight.production === "approved" || flight.production === "dispatched" || state.invoice.status === "generated"],
+      ["KOT confirmed before kitchen/challan", flight.kot === "confirmed"],
+      ["Challan generated from confirmed KOT", flight.kot === "confirmed"],
+      ["Unique challan number available", Boolean(state.kot.challanNo)],
+      ["Invoice linked to approved challan", flight.production === "approved" || flight.production === "dispatched" || state.invoice.status === "generated"],
       ["Rates selected from approved master", invoiceItems().every((item) => item.rate > 0)]
     ]
   };
@@ -369,12 +1690,24 @@ function validationRows(stage, flight = selectedFlight()) {
 }
 
 function setSelectedFlight(flightNo, screen = "kot") {
-  state.selectedFlight = flightNo;
+  const operation = operationsForSelectedDate().find((item) => item.flightNo === flightNo || item.id === flightNo);
+  state.selectedOperationId = operation?.id || state.selectedOperationId;
+  state.selectedFlight = operation?.flightNo || flightNo;
   if (screen === "kot") state.kotStep = 0;
   saveState();
   render(screen);
   setScreen(screen);
   openFlightModal();
+}
+
+function setSelectedOperation(operationId, screen = "kot") {
+  const operation = getDailyOperationById(operationId);
+  if (!operation) return;
+  state.selectedOperationId = operation.id;
+  state.selectedFlight = operation.flightNo || operation.flightSnapshot?.flightNumber || "";
+  if (screen === "kot") state.kotStep = 0;
+  saveState();
+  setScreen(screen);
 }
 
 function setKotStep(step) {
@@ -384,24 +1717,28 @@ function setKotStep(step) {
 }
 
 function updateProduction(flightNo, status) {
-  const flight = state.flights.find((item) => item.flightNo === flightNo);
+  const flight = getDailyOperationById(flightNo) || operationsForSelectedDate().find((item) => item.flightNo === flightNo) || state.flights.find((item) => item.flightNo === flightNo);
   if (!flight) return;
   flight.production = status;
   flight.meal = status === "approved" || status === "dispatched" ? "calculated" : status;
-  flight.kot = status === "approved" || status === "dispatched" || status === "prepared" ? "confirmed" : flight.kot;
+  flight.kot = flight.flightSnapshot && (status === "approved" || status === "dispatched" || status === "prepared") ? "Sent to Kitchen" : status === "approved" || status === "dispatched" || status === "prepared" ? "confirmed" : flight.kot;
+  flight.kitchenStatus = titleCase(status);
   flight.dispatch = status === "dispatched" ? "dispatched" : flight.dispatch;
+  if (flight.flightSnapshot) logAudit("Kitchen status updated", "DailyOperation", flight.id, status);
   saveState();
   render();
-  showToast(`${flight.flightNo} production updated to ${status}.`);
+  showToast(`${flight.flightNo || flight.flightSnapshot?.flightNumber} production updated to ${status}.`);
 }
 
 function approveKot() {
-  calculateMeals(false);
-  updateProduction(state.selectedFlight, "approved");
+  confirmKot(false);
+  updateProduction(state.selectedOperationId || state.selectedFlight, "approved");
 }
 
 function saveDraft() {
-  selectedFlight().kot = "in progress";
+  const operation = selectedFlight();
+  operation.kot = operation.flightSnapshot ? "Draft" : "in progress";
+  if (operation.flightSnapshot) logAudit("Draft saved", "DailyOperation", operation.id, operation.flightNo);
   saveState();
   showToast("Draft saved locally.");
   render();
@@ -421,11 +1758,32 @@ function updateLoadingRow(index, key, value) {
   if (key === "ratioType" || key === "ratioValue") {
     row.remarks = row.ratioValue === "1:1" ? "Per Pax" : `${row.ratioValue} ratio`;
   }
+  const loadingSheet = getLoadingSheetById(state.selectedLoadingSheetId);
+  const line = loadingSheet?.lines?.[index];
+  if (line) {
+    if (key === "code") line.menuItemCode = value;
+    if (key === "name") line.menuItemName = value;
+    if (key === "unit") line.unit = value;
+    if (key === "ratioType") line.ratioType = normalizeRatioType(value);
+    if (key === "ratioValue") line.ratioValue = value;
+    if (key === "remarks") line.remarks = value;
+  }
   saveState();
   render();
 }
 
 function syncKotSnapshot(flight = selectedFlight()) {
+  if (flight?.flightSnapshot) {
+    const calc = calculateOperationalPlan(flight);
+    state.kot.loads[2] = ["Final Pax On Board", flight.businessPax, flight.premiumEconomyPax, calc.finalPax, flight.technicalCrew, flight.cabinCrew];
+    state.kot.loads[3] = ["Final Meal On Board", 0, 0, calc.totalMeals, 0, 0];
+    state.kot.firstService = calc.meals.map((meal) => [meal.name, 0, 0, meal.qty, 0, 0]);
+    state.kot.secondService = structuredClone(state.kot.firstService);
+    state.kot.specialMeals = { ...state.kot.specialMeals, ...flight.specialMeals };
+    state.kot.ancillaries = calc.ancillaries.map((item) => [item.itemName || item.item, item.unit, item.finalQuantity || item.qty, item.finalQuantity || item.qty]);
+    state.kot.remarks = flight.operationalRemarks || state.kot.remarks;
+    return calc;
+  }
   const calc = calculatedKot(flight);
   const loadRow = ["Final Pax On Board", flight.j, 0, calc.finalPax, flight.tc, flight.cc];
   state.kot.loads[2] = loadRow;
@@ -438,14 +1796,60 @@ function syncKotSnapshot(flight = selectedFlight()) {
   return calc;
 }
 
+function confirmKot(shouldRender = true) {
+  const operation = selectedFlight();
+  const calc = calculateOperationalPlan(operation);
+  if (operation.flightSnapshot) {
+    const blockers = calc.validations;
+    if (blockers.length) {
+      showToast(`KOT blocked: ${blockers[0]}`);
+      if (shouldRender) render();
+      return false;
+    }
+    operation.productionPlanSnapshot = createSnapshot(calc);
+    operation.invoiceLineSnapshot = createSnapshot(calc.invoiceLines || []);
+    operation.kotSnapshot = createOperationSnapshot(operation);
+    operation.kotId = operation.kotSnapshot.kotId;
+    operation.kotNumber = operation.kotSnapshot.kotNumber;
+    operation.kot = "Confirmed";
+    operation.meal = "calculated";
+    operation.kotConfirmedAt = operation.kotSnapshot.confirmedAt;
+    operation.lastCalculatedAt = calc.calculatedAt;
+    operation.auditTrail = [...(operation.auditTrail || []), `KOT confirmed at ${operation.kotConfirmedAt}.`].slice(-10);
+    logAudit("KOT confirmed", "DailyOperation", operation.id, `${operation.flightNo} ${operation.operationDate}`);
+  } else {
+    calculateMeals(false);
+  }
+  saveState();
+  if (shouldRender) {
+    showToast(`${operation.flightNo} KOT confirmed.`);
+    render();
+  }
+  return true;
+}
+
+function titleCase(value) {
+  return String(value || "").replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
 function calculateMeals(shouldRender = true) {
   const flight = selectedFlight();
   const calc = syncKotSnapshot(flight);
-  flight.kot = "confirmed";
-  flight.meal = "calculated";
-  flight.production = flight.production === "pending" ? "in progress" : flight.production;
-  flight.lastCalculatedAt = "15/06/2026 10:24";
-  flight.auditTrail = [...(flight.auditTrail || []), `KOT recalculated for ${calc.finalPax} final pax.`].slice(-8);
+  if (flight.flightSnapshot) {
+    flight.kot = "Calculated";
+    flight.meal = "calculated";
+    flight.productionPlanSnapshot = createSnapshot(calc);
+    flight.invoiceLineSnapshot = createSnapshot(calc.invoiceLines || []);
+    flight.lastCalculatedAt = calc.calculatedAt;
+    flight.auditTrail = [...(flight.auditTrail || []), `Meal plan calculated for ${calc.finalPax} final pax.`].slice(-10);
+    logAudit("Meal plan calculated", "DailyOperation", flight.id, `${calc.totalMeals} meal qty`);
+  } else {
+    flight.kot = "confirmed";
+    flight.meal = "calculated";
+    flight.production = flight.production === "pending" ? "in progress" : flight.production;
+    flight.lastCalculatedAt = "15/06/2026 10:24";
+    flight.auditTrail = [...(flight.auditTrail || []), `KOT recalculated for ${calc.finalPax} final pax.`].slice(-8);
+  }
   saveState();
   if (shouldRender) {
     showToast(`Meal counts calculated for ${calc.finalPax} final pax.`);
@@ -454,10 +1858,12 @@ function calculateMeals(shouldRender = true) {
 }
 
 function sendToKitchen() {
-  calculateMeals(false);
   const flight = selectedFlight();
+  if (!confirmKot(false)) return;
   flight.production = "pending";
+  flight.kot = flight.flightSnapshot ? "Sent to Kitchen" : flight.kot;
   flight.dispatch = flight.dispatch === "scheduled" ? "pending" : flight.dispatch;
+  if (flight.flightSnapshot) logAudit("KOT sent to kitchen", "DailyOperation", flight.id, flight.flightNo);
   saveState();
   showToast(`${flight.flightNo} sent to kitchen production board.`);
   setScreen("kitchen");
@@ -470,85 +1876,116 @@ function openDisplayWindow(screen = "kitchen") {
 }
 
 function generateChallan() {
-  calculateMeals(false);
   const flight = selectedFlight();
-  flight.kot = "confirmed";
-  flight.meal = "calculated";
-  flight.production = "approved";
-  flight.dispatch = "pending";
+  const existing = getChallanForOperation(flight.id);
+  if (existing) {
+    state.selectedChallanId = existing.challanId;
+    state.kot.challanNo = existing.challanNumber;
+    saveState();
+    showToast(`${existing.challanNumber} already exists. Opening challan.`);
+    setScreen("challan-preview");
+    return;
+  }
+  const result = generateChallanFromKot(flight);
+  if (!result.ok) {
+    showToast(`Challan blocked: ${result.errors[0]}`);
+    render();
+    return;
+  }
   saveState();
+  showToast(`${result.challan.challanNumber} generated from confirmed KOT snapshot.`);
   setScreen("challan-preview");
 }
 
 function lockChallan() {
-  state.challanLocked = true;
-  selectedFlight().dispatch = "dispatched";
-  selectedFlight().production = "dispatched";
-  setupInvoiceFromChallan(false);
+  updateChallanStatus("Locked");
   saveState();
-  render();
   window.print();
 }
 
 function setupInvoiceFromChallan(shouldNavigate = true) {
-  const flight = selectedFlight();
-  if (flight.production !== "approved" && flight.production !== "dispatched") {
-    showToast("Prepare or approve the chalan before invoice setup.");
+  const challan = selectedChallan();
+  if (!challan) {
+    showToast("Generate a challan first.");
+    return;
+  }
+  if (!isChallanInvoiceReady(challan)) {
+    showToast("Approve, dispatch, or lock the challan before invoice setup.");
+    return;
+  }
+  const existingInvoice = getInvoiceForChallan(challan.challanId);
+  if (existingInvoice) {
+    state.selectedInvoiceId = existingInvoice.invoiceId;
+    state.invoice.status = existingInvoice.status.toLowerCase();
+    state.invoice.number = existingInvoice.invoiceNumber;
+    state.invoice.sourceChallanNo = challan.challanNumber;
+    state.invoice.sourceFlightNo = challan.flightSnapshot?.flightNumber || "";
+    saveState();
+    if (shouldNavigate) {
+      showToast(`Invoice already exists. Opening ${existingInvoice.invoiceNumber}.`);
+      setScreen("invoice");
+    }
     return;
   }
   state.invoice.status = state.invoice.status === "generated" ? "generated" : "ready";
-  state.invoice.sourceChallanNo = state.kot.challanNo;
-  state.invoice.sourceFlightNo = flight.flightNo;
-  state.invoice.setupAt = "15/06/2026 10:24";
+  state.invoice.sourceChallanNo = challan.challanNumber;
+  state.invoice.sourceFlightNo = challan.flightSnapshot?.flightNumber || "";
+  state.invoice.setupAt = nowStamp();
   saveState();
   if (shouldNavigate) {
-    showToast(`Invoice setup created from chalan ${state.kot.challanNo}.`);
+    showToast(`Invoice setup created from challan ${challan.challanNumber}.`);
     setScreen("invoice");
   }
 }
 
 function generateInvoice() {
-  const flight = selectedFlight();
-  if (flight.production !== "approved" && flight.production !== "dispatched") {
-    showToast("Approve the chalan before invoice generation.");
+  const challan = selectedChallan();
+  const existingInvoice = challan ? getInvoiceForChallan(challan.challanId) : null;
+  if (existingInvoice) {
+    state.selectedInvoiceId = existingInvoice.invoiceId;
+    saveState();
+    showToast(`Invoice already exists. Opening ${existingInvoice.invoiceNumber}.`);
+    render();
     return;
   }
-  if (state.invoice.sourceChallanNo !== state.kot.challanNo) {
-    setupInvoiceFromChallan(false);
+  const result = generateInvoiceFromChallan(challan);
+  if (!result.ok) {
+    showToast(`Invoice blocked: ${result.errors[0]}`);
+    render();
+    return;
   }
-  state.invoice.status = "generated";
-  state.invoice.number = state.invoice.number || `INV-${state.kot.challanNo}`;
-  state.invoice.generatedAt = "15/06/2026 10:24";
   saveState();
-  showToast(`${state.invoice.number} generated from challan ${state.kot.challanNo}.`);
+  showToast(`${result.invoice.invoiceNumber} generated from challan ${challan.challanNumber}.`);
   render();
 }
 
 function previewInvoice() {
-  const items = invoiceItems();
-  const subtotal = items.reduce((sum, item) => sum + item.qty * item.rate, 0);
-  const grandTotal = subtotal * 1.1;
+  const invoice = selectedInvoice();
+  const challan = selectedChallan();
+  const lines = invoice ? [...invoice.mealInvoiceLinesSnapshot, ...invoice.ancillaryInvoiceLinesSnapshot] : challan ? [...buildMealInvoiceLines(challan), ...buildAncillaryInvoiceLines(challan)] : [];
+  const totals = invoice || calculateInvoiceTotals(lines);
   openInfoModal("Invoice Preview", [
-    ["Invoice No.", state.invoice.number || "Auto on generation"],
-    ["Airline", selectedFlight().airline],
-    ["Challan No.", state.kot.challanNo],
-    ["Status", badge(state.invoice.status)],
-    ["Grand Total (USD)", grandTotal.toFixed(2)],
-    ["Grand Total (NPR)", (grandTotal * 150.35).toLocaleString(undefined, { maximumFractionDigits: 2 })]
+    ["Invoice No.", invoice?.invoiceNumber || "Auto on generation"],
+    ["Airline", invoice?.flightSnapshot?.airline || challan?.flightSnapshot?.airline || "-"],
+    ["Challan No.", invoice?.sourceChallanNumber || challan?.challanNumber || "-"],
+    ["Status", badge(invoice?.status || state.invoice.status)],
+    ["Grand Total", `${invoice?.currency || lines[0]?.currency || "USD"} ${Number(totals.grandTotal || 0).toFixed(2)}`]
   ]);
 }
 
 function downloadDemoDocument(type) {
+  const challan = selectedChallan();
+  const invoice = selectedInvoice();
   const content = type === "invoice"
-    ? `Invoice ${state.invoice.number || "Draft"}\nChallan ${state.kot.challanNo}\nFlight ${selectedFlight().flightNo}\nFinal pax ${calculatedKot().finalPax}`
+    ? `Invoice ${invoice?.invoiceNumber || state.invoice.number || "Draft"}\nChallan ${invoice?.sourceChallanNumber || challan?.challanNumber || "-"}\nFlight ${invoice?.flightSnapshot?.flightNumber || selectedFlight().flightNo}\nGrand total ${Number(invoice?.grandTotal || 0).toFixed(2)}`
     : type === "loading-chart"
       ? `Meal Loading Chart ${state.loadingChart.chartCode}\nFlight ${state.loadingChart.flightNo}\nTotal capacity ${chartTotalPax()}\nTotal quantity ${totalLoadingQuantity()}`
-      : `Challan ${state.kot.challanNo}\nFlight ${selectedFlight().flightNo}\nStatus ${selectedFlight().dispatch}`;
+      : `Challan ${challan?.challanNumber || state.kot.challanNo}\nFlight ${challan?.flightSnapshot?.flightNumber || selectedFlight().flightNo}\nStatus ${challan?.status || selectedFlight().dispatch}`;
   const blob = new Blob([content], { type: "text/plain" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = `${type}-${state.kot.challanNo}.txt`;
+  link.download = `${type}-${challan?.challanNumber || state.kot.challanNo}.txt`;
   link.click();
   URL.revokeObjectURL(url);
   showToast(`${type === "invoice" ? "Invoice" : "Challan"} demo document downloaded.`);
@@ -556,10 +1993,145 @@ function downloadDemoDocument(type) {
 
 function resetDemo() {
   localStorage.removeItem(STORAGE_KEY);
-  state = structuredClone(seed);
+  localStorage.removeItem(LEGACY_STORAGE_KEY);
+  state = createSeedState();
   normalizeState();
+  saveState();
   render();
   showToast("Demo data reset.");
+}
+
+function generateId(prefix = "id", seedValue = "") {
+  const source = seedValue === "" || seedValue === undefined || seedValue === null ? `${Date.now()}-${Math.random()}` : seedValue;
+  const base = String(source).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
+  return `${prefix}-${base || Math.random().toString(36).slice(2, 9)}`;
+}
+
+function logAudit(action, entityType, entityId, details = "") {
+  state.auditTrail = Array.isArray(state.auditTrail) ? state.auditTrail : [];
+  state.auditTrail.unshift({
+    id: generateId("audit"),
+    at: nowStamp(),
+    action,
+    entityType,
+    entityId,
+    details,
+    user: "operations1"
+  });
+  state.auditTrail = state.auditTrail.slice(0, 80);
+}
+
+function isDateWithinRange(date, from, to) {
+  if (!date || !from || !to) return false;
+  const value = new Date(date).getTime();
+  return value >= new Date(from).getTime() && value <= new Date(to).getTime();
+}
+
+function periodsOverlap(aFrom, aTo, bFrom, bTo) {
+  if (!aFrom || !aTo || !bFrom || !bTo) return false;
+  return new Date(aFrom) <= new Date(bTo) && new Date(bFrom) <= new Date(aTo);
+}
+
+function getFlightMasterById(id) {
+  return state.masters?.flights?.find((item) => item.id === id);
+}
+
+function getMenuById(id) {
+  return state.masters?.menus?.find((item) => item.id === id);
+}
+
+function getMenuLineById(menuId, lineId) {
+  return getMenuById(menuId)?.lines?.find((item) => item.id === lineId);
+}
+
+function getMappingById(id) {
+  return state.masters?.flightMenuMappings?.find((item) => item.id === id);
+}
+
+function getAncillaryById(id) {
+  return state.masters?.ancillaryItems?.find((item) => item.id === id);
+}
+
+function getLoadingSheetById(id) {
+  return state.masters?.loadingSheets?.find((item) => item.id === id);
+}
+
+function categoryFromDish(name, fallback = "") {
+  const text = `${name} ${fallback}`.toLowerCase();
+  if (text.includes("fruit")) return "Breakfast";
+  if (text.includes("yoghurt") || text.includes("yogurt")) return "Snack";
+  if (text.includes("omelette") || text.includes("uttapam") || text.includes("potato")) return "Main Course";
+  if (text.includes("roll") || text.includes("croissant") || text.includes("bread")) return "Bread";
+  if (text.includes("butter") || text.includes("jam")) return "Accompaniment";
+  if (text.includes("tsu") || text.includes("tray")) return "Tray Setup";
+  return "Other";
+}
+
+function normalizeRatioType(value) {
+  const text = String(value || "").toLowerCase();
+  if (text.includes("1 : 1") || text.includes("per pax")) return "one_to_one";
+  if (text.startsWith("j")) return "business_quantity";
+  if (text.startsWith("w")) return "premium_economy_quantity";
+  if (text.startsWith("y")) return "economy_quantity";
+  if (text.includes("crew")) return "crew_quantity";
+  if (text.includes("fixed")) return "fixed";
+  return "manual_matrix";
+}
+
+function syncLegacyLoadingChart() {
+  const loadingSheet = getLoadingSheetById(state.selectedLoadingSheetId) || state.masters.loadingSheets[0];
+  if (!loadingSheet) return;
+  const flight = getFlightMasterById(loadingSheet.flightMasterId);
+  const menu = getMenuById(loadingSheet.menuId);
+  state.selectedLoadingSheetId = loadingSheet.id;
+  state.loadingChart = {
+    ...state.loadingChart,
+    airline: flight?.airline || state.loadingChart.airline,
+    aircraftType: loadingSheet.aircraftType || flight?.aircraftType || state.loadingChart.aircraftType,
+    flightNo: flight?.flightNumber || state.loadingChart.flightNo,
+    sector: flight?.sector || state.loadingChart.sector,
+    mealType: loadingSheet.mealType || menu?.serviceType || state.loadingChart.mealType,
+    mealTime: flight?.scheduledDeparture || state.loadingChart.mealTime,
+    chartCode: loadingSheet.loadingSheetCode || state.loadingChart.chartCode,
+    version: loadingSheet.version || state.loadingChart.version,
+    effectiveFrom: loadingSheet.effectiveFrom || state.loadingChart.effectiveFrom,
+    effectiveTo: loadingSheet.effectiveTo || state.loadingChart.effectiveTo,
+    rotationFrom: loadingSheet.rotation || state.loadingChart.rotationFrom,
+    rotationTo: loadingSheet.rotation || state.loadingChart.rotationTo,
+    notes: loadingSheet.notes || "",
+    capacity: {
+      total: flight?.totalPassengerCapacity || state.loadingChart.capacity.total,
+      j: flight?.businessCapacity || 0,
+      w: flight?.premiumEconomyCapacity || 0,
+      y: flight?.economyCapacity || 0,
+      crew: Number(flight?.technicalCrewCount || 0) + Number(flight?.cabinCrewCount || 0)
+    },
+    rows: loadingSheet.lines.map((line) => ({
+      code: line.menuItemCode,
+      name: line.menuItemName,
+      unit: line.unit,
+      ratioType: loadingRatioLabel(line.ratioType),
+      ratioValue: line.ratioValue || (Number(line.quantityPerPassenger) === 1 ? "1:1" : String(line.ratioValue || "")),
+      remarks: line.remarks || line.category
+    }))
+  };
+}
+
+function loadingRatioLabel(type) {
+  const labels = {
+    percentage_split: "Percentage Split",
+    one_to_one: "1 : 1 (Per Pax)",
+    per_x_pax: "One unit per X passengers",
+    fixed: "Fixed Quantity",
+    business_quantity: "J (Business)",
+    premium_economy_quantity: "W (Premium Economy)",
+    economy_quantity: "Y (Economy)",
+    crew_quantity: "Crew",
+    cabin_class_percentage: "Cabin Class Percentage",
+    manual_matrix: "Manual Matrix",
+    minimum_plus_calculated: "Minimum + Calculated"
+  };
+  return labels[type] || "Manual Matrix";
 }
 
 function escapeHtml(value) {
@@ -616,6 +2188,12 @@ function button(label, screen, extra = "") {
 
 function isActiveNav(label, screen) {
   const activeLabels = {
+    "flight-master": "Flight Master",
+    "menu-master": "Menu Master",
+    "flight-menu-mapping": "Flight–Menu Mapping",
+    "ancillary-master": "Ancillary Item Master",
+    "loading-sheet-master": "Loading Sheet Master",
+    audit: "Audit Trail",
     planning: "Airline Setup",
     queue: "Flight Queue",
     kot: "KOT Entry",
@@ -649,12 +2227,18 @@ function navIcon(label) {
     "Menu Cycle": "MC",
     Ancillaries: "AN",
     "Special Meals": "SM",
+    "Flight Master": "FM",
+    "Menu Master": "MM",
+    "Flight–Menu Mapping": "MP",
+    "Ancillary Item Master": "AI",
+    "Loading Sheet Master": "LS",
     Users: "US",
     Configurations: "CF",
     "Kitchen Board": "KB",
     "Invoice": "IN",
     "MLC Maintenance": "LC",
-    "MLC Preview": "LP"
+    "MLC Preview": "LP",
+    "Audit Trail": "AT"
   };
   return icons[label] || "--";
 }
@@ -671,19 +2255,22 @@ function layout(title, subtitle, body, mode = "operations") {
           </div>
         </div>
         <div class="nav-scroll">
-          <div class="nav-title">Planning</div>
-          ${button("Airline Setup", "planning")}
+          <div class="nav-title">Master Data</div>
+          ${button("Flight Master", "flight-master")}
+          ${button("Menu Master", "menu-master")}
+          ${button("Flight–Menu Mapping", "flight-menu-mapping")}
+          ${button("Ancillary Item Master", "ancillary-master")}
+          ${button("Loading Sheet Master", "loading-sheet-master")}
           <div class="nav-title">Operations</div>
           ${button("Flight Queue", "queue")}
           ${button("KOT Entry", "kot")}
           ${button("KOT List", "kot-list")}
-          ${button("Challan Preview", "challan-preview")}
           ${button("Kitchen Board", "kitchen")}
+          ${button("Challan Preview", "challan-preview")}
           <div class="nav-title">Finance</div>
           ${button("Invoice", "invoice")}
-          <div class="nav-title">Loading Charts</div>
-          ${button("MLC Maintenance", "loading-maintenance")}
-          ${button("MLC Preview", "loading-preview")}
+          <div class="nav-title">Admin</div>
+          ${button("Audit Trail", "audit")}
         </div>
         <div class="version">Version 1.0.0<br>© 2026 Soaltee Gategourmet</div>
       </aside>
@@ -705,6 +2292,11 @@ function layout(title, subtitle, body, mode = "operations") {
 
 function render() {
   const routes = {
+    "flight-master": renderFlightMaster,
+    "menu-master": renderMenuMaster,
+    "flight-menu-mapping": renderMappingMaster,
+    "ancillary-master": renderAncillaryMaster,
+    "loading-sheet-master": renderLoadingSheetMaster,
     planning: renderPlanning,
     queue: renderQueue,
     kot: renderKot,
@@ -714,10 +2306,984 @@ function render() {
     challan: renderChallanFull,
     "challan-preview": renderChallanPreview,
     invoice: renderInvoice,
+    audit: renderAuditTrail,
     "loading-maintenance": renderLoadingMaintenance,
     "loading-preview": renderLoadingPreview
   };
   document.getElementById("app").innerHTML = (routes[state.screen] || renderQueue)();
+}
+
+function renderFlightMaster() {
+  return renderMasterScreen(masterConfigs().flights);
+}
+
+function renderMenuMaster() {
+  return renderMasterScreen(masterConfigs().menus);
+}
+
+function renderMappingMaster() {
+  return renderMasterScreen(masterConfigs().mappings);
+}
+
+function renderAncillaryMaster() {
+  return renderMasterScreen(masterConfigs().ancillaries);
+}
+
+function renderLoadingSheetMaster() {
+  return renderMasterScreen(masterConfigs().loadingSheets);
+}
+
+function renderAuditTrail() {
+  const rows = state.auditTrail || [];
+  const body = `
+    <section class="content">
+      <div class="toolbar">
+        <input class="search" placeholder="Search audit..." oninput="filterAuditRows(this.value)">
+        <span style="flex:1"></span>
+        <button class="btn icon-btn" onclick="resetDemo()" title="Reset demo data">RS</button>
+      </div>
+      <div class="table-wrap">
+        <table id="audit-table">
+          <thead><tr><th>Date / Time</th><th>Action</th><th>Entity Type</th><th>Entity ID</th><th>Description</th><th>Demo User</th></tr></thead>
+          <tbody>${rows.map((row) => `<tr data-search="${escapeHtml(`${row.at} ${row.action} ${row.entityType} ${row.entityId} ${row.details} ${row.user || "operations1"}`.toLowerCase())}"><td>${escapeHtml(row.at)}</td><td>${escapeHtml(row.action)}</td><td>${escapeHtml(row.entityType)}</td><td>${escapeHtml(row.entityId)}</td><td>${escapeHtml(row.details || "")}</td><td>${escapeHtml(row.user || "operations1")}</td></tr>`).join("") || `<tr><td colspan="6" class="empty-state">No audit entries yet.</td></tr>`}</tbody>
+        </table>
+      </div>
+      <div class="footer-note">Audit trail is stored in localStorage for the demo and records major master, KOT, kitchen, challan, and invoice actions.</div>
+    </section>`;
+  return layout("Audit Trail", "Local transaction and master change history", body);
+}
+
+function filterAuditRows(value) {
+  const query = value.toLowerCase();
+  document.querySelectorAll("#audit-table tbody tr[data-search]").forEach((row) => {
+    row.style.display = row.dataset.search.includes(query) ? "" : "none";
+  });
+}
+
+function masterConfigs() {
+  return {
+    flights: {
+      key: "flights",
+      screen: "flight-master",
+      title: "Flight Master",
+      subtitle: "Configure airline flight definitions, routes, schedules, capacity, and operational defaults",
+      addLabel: "Add Flight",
+      idField: "selectedFlightMasterId",
+      columns: [
+        ["Flight code", (row) => row.flightCode],
+        ["Airline", (row) => row.airline],
+        ["Flight number", (row) => row.flightNumber],
+        ["Origin", (row) => row.origin],
+        ["Destination", (row) => row.destination],
+        ["Sector", (row) => row.sector],
+        ["Days", (row) => row.operatingDays.join(", ")],
+        ["STD", (row) => row.scheduledDeparture],
+        ["STA", (row) => row.scheduledArrival],
+        ["Aircraft", (row) => row.aircraftType],
+        ["Capacity", (row) => row.totalPassengerCapacity, "num"],
+        ["Effective", (row) => `${row.effectiveFrom} to ${row.effectiveTo}`],
+        ["Status", (row) => badge(row.status)]
+      ],
+      fields: flightMasterFields,
+      create: emptyFlightMaster,
+      validate: validateFlightMaster,
+      search: (row) => `${row.flightCode} ${row.airline} ${row.flightNumber} ${row.origin} ${row.destination} ${row.sector}`,
+      filters: [
+        ["Airline", "airline", (rows) => unique(rows.map((row) => row.airline))],
+        ["Origin", "origin", (rows) => unique(rows.map((row) => row.origin))],
+        ["Destination", "destination", (rows) => unique(rows.map((row) => row.destination))],
+        ["Operating day", "operatingDay", () => ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]],
+        ["Status", "status", () => ["Active", "Inactive"]]
+      ]
+    },
+    menus: {
+      key: "menus",
+      screen: "menu-master",
+      title: "Menu Master",
+      subtitle: "Maintain menu headers, menu line items, pricing, tax, and invoice item codes",
+      addLabel: "Add Menu",
+      idField: "selectedMenuId",
+      columns: [
+        ["Menu code", (row) => row.menuCode],
+        ["Menu name", (row) => row.menuName],
+        ["Cycle", (row) => row.menuCycle],
+        ["Service type", (row) => row.serviceType],
+        ["Meal category", (row) => row.lines[0]?.category || "-"],
+        ["Currency", (row) => row.currency],
+        ["Items", (row) => row.lines.length, "num"],
+        ["Effective", (row) => `${row.effectiveFrom} to ${row.effectiveTo}`],
+        ["Version", (row) => row.version],
+        ["Status", (row) => badge(row.status)]
+      ],
+      fields: menuMasterFields,
+      create: emptyMenuMaster,
+      validate: validateMenuMaster,
+      search: (row) => `${row.menuCode} ${row.menuName} ${row.menuCycle} ${row.serviceType}`
+    },
+    mappings: {
+      key: "flightMenuMappings",
+      screen: "flight-menu-mapping",
+      title: "Flight–Menu Mapping",
+      subtitle: "Map active flights and sectors to menu cycles for operations and billing",
+      addLabel: "Add Mapping",
+      idField: "selectedMappingId",
+      columns: [
+        ["Mapping code", (row) => row.mappingCode],
+        ["Airline", (row) => getFlightMasterById(row.flightMasterId)?.airline || "-"],
+        ["Flight number", (row) => getFlightMasterById(row.flightMasterId)?.flightNumber || "-"],
+        ["Sector", (row) => getFlightMasterById(row.flightMasterId)?.sector || "-"],
+        ["Menu code", (row) => getMenuById(row.menuId)?.menuCode || "-"],
+        ["Menu name", (row) => getMenuById(row.menuId)?.menuName || "-"],
+        ["Service type", (row) => row.serviceType],
+        ["Effective", (row) => `${row.effectiveFrom} to ${row.effectiveTo}`],
+        ["Priority", (row) => row.priority, "num"],
+        ["Status", (row) => badge(row.status)]
+      ],
+      fields: mappingFields,
+      create: emptyMapping,
+      validate: validateMapping,
+      search: (row) => `${row.mappingCode} ${getFlightMasterById(row.flightMasterId)?.airline || ""} ${getFlightMasterById(row.flightMasterId)?.flightNumber || ""} ${getFlightMasterById(row.flightMasterId)?.sector || ""} ${getMenuById(row.menuId)?.menuCode || ""}`,
+      filters: [
+        ["Airline", "airline", () => unique(state.masters.flights.map((row) => row.airline))],
+        ["Flight", "flightMasterId", () => state.masters.flights.map((row) => ({ label: `${row.flightNumber} ${row.sector}`, value: row.id }))],
+        ["Menu", "menuId", () => state.masters.menus.map((row) => ({ label: row.menuCode, value: row.id }))],
+        ["Status", "status", () => ["Active", "Inactive"]]
+      ]
+    },
+    ancillaries: {
+      key: "ancillaryItems",
+      screen: "ancillary-master",
+      title: "Ancillary Item Master",
+      subtitle: "Configure billable and operational ancillary items with calculation rules",
+      addLabel: "Add Ancillary",
+      idField: "selectedAncillaryId",
+      columns: [
+        ["Item code", (row) => row.itemCode],
+        ["Item name", (row) => row.itemName],
+        ["Category", (row) => row.category],
+        ["Unit", (row) => row.unit],
+        ["Rule", (row) => ruleLabel(row.calculationRule)],
+        ["Rate", (row) => Number(row.unitRate).toFixed(2), "num"],
+        ["Currency", (row) => row.currency],
+        ["Invoice", (row) => row.invoiceEnabled ? "Yes" : "No"],
+        ["Status", (row) => badge(row.status)]
+      ],
+      fields: ancillaryFields,
+      create: emptyAncillary,
+      validate: validateAncillary,
+      search: (row) => `${row.itemCode} ${row.itemName} ${row.category} ${row.unit}`
+    },
+    loadingSheets: {
+      key: "loadingSheets",
+      screen: "loading-sheet-master",
+      title: "Loading Sheet Master",
+      subtitle: "Reusable loading sheet versions linked to flight, menu, aircraft, and menu line items",
+      addLabel: "Add Loading Sheet",
+      idField: "selectedLoadingSheetId",
+      columns: [
+        ["Loading Sheet code", (row) => row.loadingSheetCode],
+        ["Version", (row) => row.version],
+        ["Airline", (row) => getFlightMasterById(row.flightMasterId)?.airline || "-"],
+        ["Flight number", (row) => getFlightMasterById(row.flightMasterId)?.flightNumber || "-"],
+        ["Sector", (row) => getFlightMasterById(row.flightMasterId)?.sector || "-"],
+        ["Aircraft", (row) => row.aircraftType],
+        ["Menu", (row) => getMenuById(row.menuId)?.menuCode || "-"],
+        ["Meal type", (row) => row.mealType],
+        ["Effective", (row) => `${row.effectiveFrom} to ${row.effectiveTo}`],
+        ["Lines", (row) => row.lines.length, "num"],
+        ["Status", (row) => badge(row.status)]
+      ],
+      fields: loadingSheetFields,
+      create: emptyLoadingSheet,
+      validate: validateLoadingSheet,
+      search: (row) => `${row.loadingSheetCode} ${getFlightMasterById(row.flightMasterId)?.airline || ""} ${getFlightMasterById(row.flightMasterId)?.flightNumber || ""} ${getMenuById(row.menuId)?.menuCode || ""} ${row.mealType}`,
+      extraActions: (row) => `<button class="btn" onclick="openLoadingMaintenance('${row.id}')">Maintenance</button><button class="btn" onclick="previewLoadingSheet('${row.id}')">Preview Matrix</button><button class="btn" onclick="cloneMasterRecord('loadingSheets','${row.id}')">Clone Version</button>`
+    }
+  };
+}
+
+function renderMasterScreen(config) {
+  const rows = masterRows(config);
+  const filteredRows = applyMasterFilters(rows, config);
+  const activeCount = rows.filter((row) => row.status === "Active").length;
+  const warnings = rows.reduce((sum, row) => sum + config.validate(row, row.id).length, 0);
+  const body = `
+    <section class="content">
+      <div class="kpi-grid master-kpi-grid">
+        ${kpi("MD", "Total Records", rows.length, config.title)}
+        ${kpi("AC", "Active", activeCount, "Available to operations", "green")}
+        ${kpi("IN", "Inactive", rows.length - activeCount, "Retained for history", "amber")}
+        ${kpi("VA", "Validation Flags", warnings, "Current saved records", warnings ? "red" : "green")}
+      </div>
+      <div class="toolbar master-toolbar">
+        <input class="search" value="${escapeHtml(masterFilter(config.screen, "search"))}" placeholder="Search..." oninput="setMasterFilter('${config.screen}', 'search', this.value)">
+        ${renderMasterFilters(config, rows)}
+        <span style="flex:1"></span>
+        <button class="btn green" onclick="openMasterModal('${config.key}')">${config.addLabel}</button>
+        <button class="btn icon-btn" onclick="resetDemo()" title="Reset demo data">RS</button>
+      </div>
+      <div class="table-wrap master-table-wrap">
+        <table>
+          <thead><tr>${config.columns.map(([label]) => `<th>${label}</th>`).join("")}<th>Actions</th></tr></thead>
+          <tbody>
+            ${filteredRows.map((row) => masterTableRow(config, row)).join("") || `<tr><td colspan="${config.columns.length + 1}" class="empty-state">No master records match the current filters.</td></tr>`}
+          </tbody>
+        </table>
+      </div>
+      <div class="footer-note">Master data is stored in localStorage with stable internal IDs. Daily operations continue to use these records as their source setup.</div>
+    </section>
+  `;
+  return layout(config.title, config.subtitle, body);
+}
+
+function masterRows(config) {
+  return state.masters?.[config.key] || [];
+}
+
+function masterTableRow(config, row) {
+  return `
+    <tr>
+      ${config.columns.map(([label, getter, className]) => `<td class="${className || ""}">${getter(row)}</td>`).join("")}
+      <td>
+        <div class="row-actions">
+          <button class="btn" onclick="openMasterModal('${config.key}','${row.id}','view')">View</button>
+          <button class="btn green" onclick="openMasterModal('${config.key}','${row.id}','edit')">Edit</button>
+          ${config.key === "menus" ? `<button class="btn" onclick="cloneMasterRecord('${config.key}','${row.id}')">Clone Menu</button>` : ""}
+          ${config.extraActions ? config.extraActions(row) : ""}
+          <button class="btn" onclick="toggleMasterStatus('${config.key}','${row.id}')">${row.status === "Active" ? "Deactivate" : "Activate"}</button>
+          <button class="btn danger" onclick="requestDeleteMaster('${config.key}','${row.id}')">Delete</button>
+        </div>
+      </td>
+    </tr>
+  `;
+}
+
+function renderMasterFilters(config, rows) {
+  return (config.filters || []).map(([label, key, valuesGetter]) => {
+    const values = valuesGetter(rows);
+    return `<select class="field" onchange="setMasterFilter('${config.screen}', '${key}', this.value)">
+      <option value="">All ${label}</option>
+      ${values.map((item) => {
+        const option = typeof item === "object" ? item : { label: item, value: item };
+        return `<option value="${escapeHtml(option.value)}" ${masterFilter(config.screen, key) === option.value ? "selected" : ""}>${escapeHtml(option.label)}</option>`;
+      }).join("")}
+    </select>`;
+  }).join("");
+}
+
+function setMasterFilter(screen, key, value) {
+  state.queueFilters.master = state.queueFilters.master || {};
+  state.queueFilters.master[screen] = state.queueFilters.master[screen] || {};
+  state.queueFilters.master[screen][key] = value;
+  saveState();
+  render();
+}
+
+function masterFilter(screen, key) {
+  return state.queueFilters?.master?.[screen]?.[key] || "";
+}
+
+function applyMasterFilters(rows, config) {
+  const query = masterFilter(config.screen, "search").trim().toLowerCase();
+  return rows.filter((row) => {
+    const searchMatch = !query || config.search(row).toLowerCase().includes(query);
+    if (!searchMatch) return false;
+    return (config.filters || []).every(([, key]) => {
+      const value = masterFilter(config.screen, key);
+      if (!value) return true;
+      if (key === "operatingDay") return row.operatingDays?.includes(value);
+      if (key === "airline" && config.key === "flightMenuMappings") return getFlightMasterById(row.flightMasterId)?.airline === value;
+      return String(row[key] || "") === value;
+    });
+  });
+}
+
+function unique(values) {
+  return [...new Set(values.filter(Boolean))].sort();
+}
+
+function configForKey(key) {
+  return Object.values(masterConfigs()).find((config) => config.key === key);
+}
+
+function openMasterModal(key, id = "", mode = "edit") {
+  const config = configForKey(key);
+  const existing = id ? masterRows(config).find((row) => row.id === id) : null;
+  const record = structuredClone(existing || config.create());
+  const readonly = mode === "view";
+  document.querySelector(".modal-backdrop")?.remove();
+  document.body.insertAdjacentHTML("beforeend", `
+    <div class="modal-backdrop" onclick="closeModal(event)">
+      <div class="modal wide-modal" role="dialog" aria-modal="true">
+        <div class="modal-head"><h2 style="margin:0">${readonly ? "View" : existing ? "Edit" : "Add"} ${config.title}</h2><button class="btn icon-btn" onclick="closeModal()">×</button></div>
+        <form id="master-form" onsubmit="saveMasterForm(event, '${key}', '${id}')">
+          <div class="modal-body">
+            ${config.fields(record, readonly)}
+          </div>
+          <div class="modal-foot">
+            <span class="muted">${readonly ? "Read only view." : "Changes are saved only when Save is clicked."}</span>
+            <button type="button" class="btn" onclick="closeModal()">Cancel</button>
+            ${readonly ? "" : `<button type="submit" class="btn green">Save</button>`}
+          </div>
+        </form>
+      </div>
+    </div>
+  `);
+}
+
+function saveMasterForm(event, key, id = "") {
+  event.preventDefault();
+  const config = configForKey(key);
+  const form = event.target;
+  const existing = id ? masterRows(config).find((row) => row.id === id) : null;
+  const record = readMasterForm(key, form, existing || config.create());
+  const errors = config.validate(record, id);
+  if (errors.length) {
+    showFormErrors(errors);
+    return;
+  }
+  if (existing) {
+    Object.assign(existing, record);
+    logAudit("Master edited", config.title, existing.id);
+  } else {
+    state.masters[key].push(record);
+    state[config.idField] = record.id;
+    logAudit("Master created", config.title, record.id);
+  }
+  if (key === "loadingSheets") syncLegacyLoadingChart();
+  saveState();
+  closeModal();
+  showToast(`${config.title} saved.`);
+  render();
+}
+
+function showFormErrors(errors) {
+  document.querySelector(".form-errors")?.remove();
+  document.querySelector(".modal-body")?.insertAdjacentHTML("afterbegin", `<div class="notice form-errors"><span class="check">!</span><div><b>Fix before saving</b><br>${errors.map((item) => `<span>${escapeHtml(item)}</span>`).join("<br>")}</div></div>`);
+}
+
+function toggleMasterStatus(key, id) {
+  const config = configForKey(key);
+  const row = masterRows(config).find((item) => item.id === id);
+  if (!row) return;
+  row.status = row.status === "Active" ? "Inactive" : "Active";
+  logAudit(row.status === "Active" ? "Master activated" : "Master deactivated", config.title, id);
+  saveState();
+  showToast(`${config.title} ${row.status.toLowerCase()}.`);
+  render();
+}
+
+function requestDeleteMaster(key, id) {
+  const config = configForKey(key);
+  const row = masterRows(config).find((item) => item.id === id);
+  if (!row) return;
+  const reason = deleteBlockReason(key, id);
+  const message = reason || "This will remove the unreferenced demo master record from localStorage.";
+  openConfirmModal(`Delete ${config.title}`, message, reason ? "" : `deleteMasterRecord('${key}','${id}')`);
+}
+
+function openConfirmModal(title, message, confirmHandler) {
+  document.querySelector(".modal-backdrop")?.remove();
+  document.body.insertAdjacentHTML("beforeend", `
+    <div class="modal-backdrop" onclick="closeModal(event)">
+      <div class="modal" role="dialog" aria-modal="true">
+        <div class="modal-head"><h2 style="margin:0">${escapeHtml(title)}</h2><button class="btn icon-btn" onclick="closeModal()">×</button></div>
+        <div class="modal-body"><div class="notice"><span class="check">${confirmHandler ? "!" : "✓"}</span><div>${escapeHtml(message)}</div></div></div>
+        <div class="modal-foot"><span class="muted">${confirmHandler ? "Hard delete is allowed only when no references exist." : "Deactivate this record instead if operations still reference it."}</span><button class="btn" onclick="closeModal()">Close</button>${confirmHandler ? `<button class="btn danger" onclick="${confirmHandler};closeModal()">Delete</button>` : ""}</div>
+      </div>
+    </div>
+  `);
+}
+
+function deleteMasterRecord(key, id) {
+  const config = configForKey(key);
+  state.masters[key] = masterRows(config).filter((item) => item.id !== id);
+  logAudit("Master deleted", config.title, id);
+  saveState();
+  showToast(`${config.title} deleted.`);
+  render();
+}
+
+function cloneMasterRecord(key, id) {
+  const config = configForKey(key);
+  const source = masterRows(config).find((item) => item.id === id);
+  if (!source) return;
+  const clone = structuredClone(source);
+  clone.id = generateId(key.slice(0, 4));
+  clone.status = "Inactive";
+  if (key === "menus") {
+    clone.menuCode = `${clone.menuCode}-COPY`;
+    clone.menuName = `${clone.menuName} Copy`;
+    clone.version = String(Number(clone.version || 0) + 1);
+    clone.lines = clone.lines.map((line, index) => ({ ...line, id: generateId("mlin", `${clone.id}-${index}`) }));
+  }
+  if (key === "loadingSheets") {
+    clone.loadingSheetCode = `${clone.loadingSheetCode}-COPY`;
+    clone.version = String(Number(clone.version || 0) + 1);
+    clone.lines = clone.lines.map((line, index) => ({ ...line, id: generateId("lsln", `${clone.id}-${index}`) }));
+  }
+  state.masters[key].push(clone);
+  state[config.idField] = clone.id;
+  logAudit("Master cloned", config.title, clone.id, `From ${id}`);
+  saveState();
+  showToast(`${config.title} cloned as inactive version.`);
+  render();
+}
+
+function previewLoadingSheet(id) {
+  state.selectedLoadingSheetId = id;
+  syncLegacyLoadingChart();
+  saveState();
+  setScreen("loading-preview");
+}
+
+function openLoadingMaintenance(id) {
+  state.selectedLoadingSheetId = id;
+  syncLegacyLoadingChart();
+  saveState();
+  setScreen("loading-maintenance");
+}
+
+function saveLoadingSheetFromChart() {
+  const loadingSheet = getLoadingSheetById(state.selectedLoadingSheetId);
+  if (!loadingSheet) {
+    showToast("Select a loading sheet before saving.");
+    return;
+  }
+  const flight = state.masters.flights.find((item) => item.flightNumber === state.loadingChart.flightNo && item.airline === state.loadingChart.airline);
+  const menu = state.masters.menus.find((item) => item.serviceType === state.loadingChart.mealType) || getMenuById(loadingSheet.menuId);
+  loadingSheet.loadingSheetCode = state.loadingChart.chartCode;
+  loadingSheet.version = state.loadingChart.version;
+  loadingSheet.flightMasterId = flight?.id || loadingSheet.flightMasterId;
+  loadingSheet.aircraftType = state.loadingChart.aircraftType;
+  loadingSheet.menuId = menu?.id || loadingSheet.menuId;
+  loadingSheet.mealType = state.loadingChart.mealType;
+  loadingSheet.effectiveFrom = state.loadingChart.effectiveFrom;
+  loadingSheet.effectiveTo = state.loadingChart.effectiveTo;
+  loadingSheet.rotation = `${state.loadingChart.rotationFrom || ""} ${state.loadingChart.rotationTo || ""}`.trim();
+  loadingSheet.notes = state.loadingChart.notes;
+  loadingSheet.lines = state.loadingChart.rows.map((row, index) => {
+    const menuLine = menu?.lines?.find((line) => line.itemCode === row.code) || menu?.lines?.[index];
+    return {
+      ...(loadingSheet.lines[index] || {}),
+      id: loadingSheet.lines[index]?.id || generateId("lsln", index),
+      menuLineId: menuLine?.id || loadingSheet.lines[index]?.menuLineId || "",
+      menuItemCode: row.code,
+      menuItemName: row.name,
+      category: menuLine?.category || categoryFromDish(row.name, row.remarks),
+      unit: row.unit,
+      cabinClass: row.ratioType?.startsWith("J") ? "Business" : row.ratioType?.startsWith("Crew") ? "Crew" : "All",
+      ratioType: normalizeRatioType(row.ratioType),
+      ratioValue: row.ratioValue,
+      fixedQuantity: 0,
+      quantityPerPassenger: row.ratioValue === "1:1" ? 1 : 0,
+      minimumQuantity: 0,
+      maximumQuantity: "",
+      bufferPercentage: 0,
+      roundingMethod: "ceil",
+      displaySequence: index + 1,
+      remarks: row.remarks || ""
+    };
+  });
+  const errors = validateLoadingSheet(loadingSheet, loadingSheet.id);
+  if (errors.length) {
+    showToast(errors[0]);
+    return;
+  }
+  logAudit("Master edited", "Loading Sheet Master", loadingSheet.id, "Saved from maintenance screen");
+  saveState();
+  showToast("Loading Sheet Master saved locally.");
+  render();
+}
+
+function flightMasterFields(row, readonly) {
+  return formGrid([
+    inputSpec("Internal ID", "id", row.id, true),
+    inputSpec("Flight code *", "flightCode", row.flightCode),
+    inputSpec("Airline *", "airline", row.airline),
+    inputSpec("Flight number *", "flightNumber", row.flightNumber),
+    inputSpec("Flight description", "description", row.description),
+    inputSpec("Origin airport code *", "origin", row.origin),
+    inputSpec("Destination airport code *", "destination", row.destination),
+    inputSpec("Derived sector", "sector", row.sector, true),
+    inputSpec("Days of operation *", "operatingDays", row.operatingDays.join(", ")),
+    inputSpec("Scheduled departure time *", "scheduledDeparture", row.scheduledDeparture, false, "time"),
+    inputSpec("Scheduled arrival time *", "scheduledArrival", row.scheduledArrival, false, "time"),
+    inputSpec("Effective from *", "effectiveFrom", row.effectiveFrom, false, "date"),
+    inputSpec("Effective to *", "effectiveTo", row.effectiveTo, false, "date"),
+    inputSpec("Aircraft type", "aircraftType", row.aircraftType),
+    inputSpec("Default registration number", "defaultRegistration", row.defaultRegistration),
+    inputSpec("Business Class capacity", "businessCapacity", row.businessCapacity, false, "number"),
+    inputSpec("Premium Economy capacity", "premiumEconomyCapacity", row.premiumEconomyCapacity, false, "number"),
+    inputSpec("Economy Class capacity", "economyCapacity", row.economyCapacity, false, "number"),
+    inputSpec("Technical crew count", "technicalCrewCount", row.technicalCrewCount, false, "number"),
+    inputSpec("Cabin crew count", "cabinCrewCount", row.cabinCrewCount, false, "number"),
+    inputSpec("Loading bay", "loadingBay", row.loadingBay),
+    selectSpec("Gate type", "gateType", row.gateType, ["Narrow Body", "Wide Body", "Remote Stand"]),
+    selectSpec("Uplift type", "upliftType", row.upliftType, ["Full Uplift", "Top Up", "Transit", "No Uplift"]),
+    inputSpec("Hot meal dish-out time", "hotMealDishOutTime", row.hotMealDishOutTime, false, "time"),
+    inputSpec("Cold meal preparation time", "coldMealPreparationTime", row.coldMealPreparationTime, false, "time"),
+    inputSpec("Dispatch time", "dispatchTime", row.dispatchTime, false, "time"),
+    selectSpec("Status", "status", row.status, ["Active", "Inactive"])
+  ], readonly) + textareaSpec("Default remarks", "remarks", row.remarks, readonly);
+}
+
+function menuMasterFields(row, readonly) {
+  return formGrid([
+    inputSpec("Internal menu ID", "id", row.id, true),
+    inputSpec("Menu code *", "menuCode", row.menuCode),
+    inputSpec("Menu name *", "menuName", row.menuName),
+    inputSpec("Menu cycle", "menuCycle", row.menuCycle),
+    selectSpec("Meal/service type", "serviceType", row.serviceType, ["Hot Breakfast", "Main Meal", "Snack", "Beverage", "Special Meal", "Crew Meal"]),
+    inputSpec("Service sequence", "serviceSequence", row.serviceSequence),
+    inputSpec("Cabin class applicability", "cabinClasses", row.cabinClasses.join(", ")),
+    selectSpec("Currency", "currency", row.currency, ["USD", "NPR", "INR"]),
+    inputSpec("Version", "version", row.version),
+    inputSpec("Effective from", "effectiveFrom", row.effectiveFrom, false, "date"),
+    inputSpec("Effective to", "effectiveTo", row.effectiveTo, false, "date"),
+    selectSpec("Status", "status", row.status, ["Active", "Inactive"])
+  ], readonly) + textareaSpec("Description", "description", row.description, readonly) + jsonEditor("Menu lines", "linesJson", row.lines, readonly, menuLineHint());
+}
+
+function mappingFields(row, readonly) {
+  return formGrid([
+    inputSpec("Internal mapping ID", "id", row.id, true),
+    inputSpec("Mapping code *", "mappingCode", row.mappingCode),
+    selectSpec("Flight Master *", "flightMasterId", row.flightMasterId, state.masters.flights.map((flight) => ({ label: `${flight.airline} ${flight.flightNumber} ${flight.sector}`, value: flight.id }))),
+    selectSpec("Menu Master *", "menuId", row.menuId, state.masters.menus.map((menu) => ({ label: `${menu.menuCode} - ${menu.menuName}`, value: menu.id }))),
+    inputSpec("Service sequence", "serviceSequence", row.serviceSequence),
+    selectSpec("Meal/service type", "serviceType", row.serviceType, ["Hot Breakfast", "Main Meal", "Snack", "Beverage", "Special Meal", "Crew Meal"]),
+    inputSpec("Effective from", "effectiveFrom", row.effectiveFrom, false, "date"),
+    inputSpec("Effective to", "effectiveTo", row.effectiveTo, false, "date"),
+    inputSpec("Priority", "priority", row.priority, false, "number"),
+    selectSpec("Status", "status", row.status, ["Active", "Inactive"])
+  ], readonly) + derivedFlightPreview(row.flightMasterId) + textareaSpec("Notes", "notes", row.notes, readonly);
+}
+
+function ancillaryFields(row, readonly) {
+  return formGrid([
+    inputSpec("Internal ancillary item ID", "id", row.id, true),
+    inputSpec("Item code *", "itemCode", row.itemCode),
+    inputSpec("Item name *", "itemName", row.itemName),
+    inputSpec("Category", "category", row.category),
+    inputSpec("Unit of measure *", "unit", row.unit),
+    selectSpec("Currency", "currency", row.currency, ["USD", "NPR", "INR"]),
+    inputSpec("Unit rate", "unitRate", row.unitRate, false, "number"),
+    inputSpec("Tax percentage", "taxPercentage", row.taxPercentage, false, "number"),
+    inputSpec("Invoice item code", "invoiceItemCode", row.invoiceItemCode),
+    selectSpec("Invoice enabled", "invoiceEnabled", row.invoiceEnabled ? "true" : "false", [{ label: "Yes", value: "true" }, { label: "No", value: "false" }]),
+    selectSpec("Status", "status", row.status, ["Active", "Inactive"]),
+    selectSpec("Applicability", "applicabilityType", row.applicability?.type || "all_airlines", [
+      { label: "All airlines", value: "all_airlines" },
+      { label: "Selected airline", value: "selected_airline" },
+      { label: "Selected flight", value: "selected_flight" },
+      { label: "Selected route", value: "selected_route" },
+      { label: "Selected aircraft type", value: "selected_aircraft_type" }
+    ]),
+    inputSpec("Applicable airline", "applicabilityAirline", row.applicability?.airline || ""),
+    selectSpec("Applicable flight", "applicabilityFlightMasterId", row.applicability?.flightMasterId || "", [{ label: "None", value: "" }, ...state.masters.flights.map((flight) => ({ label: `${flight.flightNumber} ${flight.sector}`, value: flight.id }))]),
+    inputSpec("Applicable route", "applicabilityRoute", row.applicability?.route || ""),
+    inputSpec("Applicable aircraft type", "applicabilityAircraftType", row.applicability?.aircraftType || "")
+  ], readonly) + textareaSpec("Description", "description", row.description, readonly) + jsonEditor("Calculation rule", "calculationRuleJson", row.calculationRule, readonly, ancillaryRuleHint());
+}
+
+function loadingSheetFields(row, readonly) {
+  return formGrid([
+    inputSpec("Internal loading sheet ID", "id", row.id, true),
+    inputSpec("Loading Sheet code *", "loadingSheetCode", row.loadingSheetCode),
+    inputSpec("Version", "version", row.version),
+    selectSpec("Flight Master *", "flightMasterId", row.flightMasterId, state.masters.flights.map((flight) => ({ label: `${flight.airline} ${flight.flightNumber} ${flight.sector}`, value: flight.id }))),
+    inputSpec("Aircraft type", "aircraftType", row.aircraftType),
+    selectSpec("Menu Master *", "menuId", row.menuId, state.masters.menus.map((menu) => ({ label: `${menu.menuCode} - ${menu.menuName}`, value: menu.id }))),
+    inputSpec("Service sequence", "serviceSequence", row.serviceSequence),
+    selectSpec("Meal type", "mealType", row.mealType, ["Hot Breakfast", "Main Meal", "Snack", "Beverage", "Special Meal", "Crew Meal"]),
+    inputSpec("Days of operation", "daysOfOperation", row.daysOfOperation.join(", ")),
+    inputSpec("Effective from", "effectiveFrom", row.effectiveFrom, false, "date"),
+    inputSpec("Effective to", "effectiveTo", row.effectiveTo, false, "date"),
+    inputSpec("Rotation", "rotation", row.rotation),
+    selectSpec("Status", "status", row.status, ["Active", "Inactive"])
+  ], readonly) + derivedFlightPreview(row.flightMasterId) + textareaSpec("Notes", "notes", row.notes, readonly) + jsonEditor("Loading sheet lines", "linesJson", row.lines, readonly, loadingLineHint(row.menuId));
+}
+
+function inputSpec(label, name, value, readonly = false, type = "text") {
+  return { type: "input", label, name, value, readonly, inputType: type };
+}
+
+function selectSpec(label, name, value, options) {
+  return { type: "select", label, name, value, options };
+}
+
+function formGrid(specs, readonly = false) {
+  return `<div class="form-grid">${specs.map((spec) => {
+    if (spec.type === "select") {
+      return `<label><span class="muted">${escapeHtml(spec.label)}</span><select class="select" name="${spec.name}" ${readonly ? "disabled" : ""}>${spec.options.map((item) => {
+        const option = typeof item === "object" ? item : { label: item, value: item };
+        return `<option value="${escapeHtml(option.value)}" ${String(option.value) === String(spec.value) ? "selected" : ""}>${escapeHtml(option.label)}</option>`;
+      }).join("")}</select></label>`;
+    }
+    return `<label><span class="muted">${escapeHtml(spec.label)}</span><input class="input ${spec.readonly ? "readonly-input" : ""}" type="${spec.inputType}" name="${spec.name}" value="${escapeHtml(spec.value)}" ${spec.readonly || readonly ? "readonly" : ""}></label>`;
+  }).join("")}</div>`;
+}
+
+function textareaSpec(label, name, value, readonly = false) {
+  return `<label class="full-field"><span class="muted">${escapeHtml(label)}</span><textarea name="${name}" ${readonly ? "readonly" : ""}>${escapeHtml(value)}</textarea></label>`;
+}
+
+function jsonEditor(label, name, value, readonly, hint = "") {
+  return `<label class="full-field"><span class="muted">${escapeHtml(label)}</span><textarea class="json-editor" name="${name}" ${readonly ? "readonly" : ""}>${escapeHtml(JSON.stringify(value, null, 2))}</textarea>${hint ? `<small class="muted">${escapeHtml(hint)}</small>` : ""}</label>`;
+}
+
+function derivedFlightPreview(flightMasterId) {
+  const flight = getFlightMasterById(flightMasterId);
+  if (!flight) return `<div class="notice compact-notice"><span class="check">!</span><div><b>No flight selected</b><br><span class="muted">Airline, flight number, and route derive from Flight Master after save.</span></div></div>`;
+  return `<div class="notice compact-notice"><span class="check">✓</span><div><b>Derived from Flight Master</b><br><span class="muted">${escapeHtml(flight.airline)} / ${escapeHtml(flight.flightNumber)} / ${escapeHtml(flight.sector)}</span></div></div>`;
+}
+
+function menuLineHint() {
+  return "Each line needs itemCode, itemName, category, unit, unitPrice, status, and displaySequence.";
+}
+
+function ancillaryRuleHint() {
+  return "Supported calculationType values include fixed, per_passenger, per_x_pax, buffer, manual, and fixed_plus_per_pax.";
+}
+
+function loadingLineHint(menuId) {
+  const menu = getMenuById(menuId);
+  return menu ? `Use menuLineId from selected menu lines, for example ${menu.lines[0]?.id || "no active line yet"}.` : "Select a menu first; every loading line must reference a valid menu line.";
+}
+
+function readMasterForm(key, form, base) {
+  const data = Object.fromEntries(new FormData(form).entries());
+  if (key === "flights") {
+    const origin = String(data.origin || "").trim().toUpperCase();
+    const destination = String(data.destination || "").trim().toUpperCase();
+    return normalizeFlightMasterRecord({
+      ...base,
+      ...data,
+      origin,
+      destination,
+      sector: `${origin} - ${destination}`,
+      operatingDays: splitList(data.operatingDays),
+      businessCapacity: Number(data.businessCapacity || 0),
+      premiumEconomyCapacity: Number(data.premiumEconomyCapacity || 0),
+      economyCapacity: Number(data.economyCapacity || 0),
+      totalPassengerCapacity: Number(data.businessCapacity || 0) + Number(data.premiumEconomyCapacity || 0) + Number(data.economyCapacity || 0),
+      technicalCrewCount: Number(data.technicalCrewCount || 0),
+      cabinCrewCount: Number(data.cabinCrewCount || 0)
+    });
+  }
+  if (key === "menus") {
+    return normalizeMenuRecord({
+      ...base,
+      ...data,
+      cabinClasses: splitList(data.cabinClasses),
+      lines: parseJsonField(data.linesJson, base.lines)
+    });
+  }
+  if (key === "flightMenuMappings") {
+    const menu = getMenuById(data.menuId);
+    return normalizeMappingRecord({ ...base, ...data, serviceType: data.serviceType || menu?.serviceType || "", priority: Number(data.priority || 1) });
+  }
+  if (key === "ancillaryItems") {
+    return normalizeAncillaryRecord({
+      ...base,
+      ...data,
+      invoiceEnabled: data.invoiceEnabled === "true",
+      unitRate: Number(data.unitRate || 0),
+      taxPercentage: Number(data.taxPercentage || 0),
+      applicability: {
+        type: data.applicabilityType,
+        airline: data.applicabilityAirline || "",
+        flightMasterId: data.applicabilityFlightMasterId || "",
+        route: data.applicabilityRoute || "",
+        aircraftType: data.applicabilityAircraftType || ""
+      },
+      calculationRule: parseJsonField(data.calculationRuleJson, base.calculationRule)
+    });
+  }
+  if (key === "loadingSheets") {
+    return normalizeLoadingSheetRecord({
+      ...base,
+      ...data,
+      daysOfOperation: splitList(data.daysOfOperation),
+      lines: parseJsonField(data.linesJson, base.lines)
+    });
+  }
+  return { ...base, ...data };
+}
+
+function splitList(value) {
+  return String(value || "").split(",").map((item) => item.trim()).filter(Boolean);
+}
+
+function parseJsonField(value, fallback) {
+  try {
+    return JSON.parse(value || "[]");
+  } catch {
+    return fallback;
+  }
+}
+
+function emptyFlightMaster() {
+  return normalizeFlightMasterRecord({
+    id: generateId("flt"),
+    flightCode: "",
+    airline: "",
+    flightNumber: "",
+    description: "",
+    origin: "KTM",
+    destination: "",
+    sector: "",
+    operatingDays: [],
+    scheduledDeparture: "",
+    scheduledArrival: "",
+    effectiveFrom: "2026-06-15",
+    effectiveTo: "2026-12-31",
+    aircraftType: "",
+    defaultRegistration: "",
+    businessCapacity: 0,
+    premiumEconomyCapacity: 0,
+    economyCapacity: 0,
+    technicalCrewCount: 2,
+    cabinCrewCount: 6,
+    loadingBay: "",
+    gateType: "Narrow Body",
+    upliftType: "Full Uplift",
+    hotMealDishOutTime: "",
+    coldMealPreparationTime: "",
+    dispatchTime: "",
+    remarks: "",
+    status: "Active"
+  });
+}
+
+function emptyMenuMaster() {
+  return normalizeMenuRecord({
+    id: generateId("menu"),
+    menuCode: "",
+    menuName: "",
+    menuCycle: "",
+    description: "",
+    serviceType: "Hot Breakfast",
+    serviceSequence: "1",
+    cabinClasses: ["Economy"],
+    currency: "USD",
+    version: "1",
+    effectiveFrom: "2026-06-15",
+    effectiveTo: "2026-12-31",
+    status: "Active",
+    lines: [makeMenuLine("ITEM-001", "New Menu Item", "Main Course", "Hot Breakfast", "Other", "Pax", 0, 1)]
+  });
+}
+
+function emptyMapping() {
+  return normalizeMappingRecord({
+    id: generateId("map"),
+    mappingCode: "",
+    flightMasterId: state.masters.flights[0]?.id || "",
+    menuId: state.masters.menus[0]?.id || "",
+    serviceSequence: "1",
+    serviceType: state.masters.menus[0]?.serviceType || "Hot Breakfast",
+    effectiveFrom: "2026-06-15",
+    effectiveTo: "2026-12-31",
+    priority: 1,
+    status: "Active",
+    notes: ""
+  });
+}
+
+function emptyAncillary() {
+  return normalizeAncillaryRecord(makeAncillary("", "", "Other", "", 0, "manual", {}));
+}
+
+function emptyLoadingSheet() {
+  const flight = state.masters.flights[0];
+  const menu = state.masters.menus.find((item) => item.lines.length) || state.masters.menus[0];
+  return normalizeLoadingSheetRecord({
+    id: generateId("load"),
+    loadingSheetCode: "",
+    version: "1",
+    flightMasterId: flight?.id || "",
+    aircraftType: flight?.aircraftType || "",
+    menuId: menu?.id || "",
+    serviceSequence: "1",
+    mealType: menu?.serviceType || "Hot Breakfast",
+    daysOfOperation: flight?.operatingDays || [],
+    effectiveFrom: "2026-06-15",
+    effectiveTo: "2026-12-31",
+    rotation: "",
+    notes: "",
+    status: "Active",
+    lines: (menu?.lines || []).slice(0, 3).map((line, index) => ({
+      id: generateId("lsln", index),
+      menuLineId: line.id,
+      menuItemCode: line.itemCode,
+      menuItemName: line.itemName,
+      category: line.category,
+      unit: line.unit,
+      cabinClass: "All",
+      ratioType: "one_to_one",
+      ratioValue: "1:1",
+      fixedQuantity: 0,
+      quantityPerPassenger: 1,
+      minimumQuantity: 0,
+      maximumQuantity: "",
+      bufferPercentage: 0,
+      roundingMethod: "ceil",
+      displaySequence: index + 1,
+      remarks: ""
+    }))
+  });
+}
+
+function validateFlightMaster(record, existingId = "") {
+  const errors = [];
+  if (!record.airline) errors.push("Airline is required.");
+  if (!record.flightNumber) errors.push("Flight number is required.");
+  if (!record.origin || !record.destination) errors.push("Origin and destination are required.");
+  if (record.origin && record.destination && record.origin === record.destination) errors.push("Origin and destination cannot be identical.");
+  if (!record.operatingDays.length) errors.push("At least one operating day is required.");
+  if (!record.scheduledDeparture || !record.scheduledArrival) errors.push("Departure and arrival times are required.");
+  if (record.effectiveFrom && record.effectiveTo && new Date(record.effectiveFrom) > new Date(record.effectiveTo)) errors.push("Effective-from date cannot be after effective-to date.");
+  ["businessCapacity", "premiumEconomyCapacity", "economyCapacity", "technicalCrewCount", "cabinCrewCount"].forEach((field) => {
+    if (Number(record[field]) < 0) errors.push("Capacity and crew counts cannot be negative.");
+  });
+  const duplicate = state.masters.flights.some((item) => item.id !== existingId && item.status === "Active" && record.status === "Active" && item.airline === record.airline && item.flightNumber === record.flightNumber && item.origin === record.origin && item.destination === record.destination && periodsOverlap(item.effectiveFrom, item.effectiveTo, record.effectiveFrom, record.effectiveTo));
+  if (duplicate) errors.push("An overlapping active flight definition already exists.");
+  return unique(errors);
+}
+
+function validateMenuMaster(record, existingId = "") {
+  const errors = [];
+  if (!record.menuCode) errors.push("Menu code is required.");
+  if (!record.menuName) errors.push("Menu name is required.");
+  if (state.masters.menus.some((item) => item.id !== existingId && item.menuCode === record.menuCode)) errors.push("Menu code must be unique.");
+  if (record.effectiveFrom && record.effectiveTo && new Date(record.effectiveFrom) > new Date(record.effectiveTo)) errors.push("Effective dates are invalid.");
+  if (!record.lines.some((line) => line.status === "Active")) errors.push("At least one active menu line is required.");
+  const itemCodes = record.lines.map((line) => line.itemCode).filter(Boolean);
+  if (new Set(itemCodes).size !== itemCodes.length) errors.push("Item code must be unique inside a menu.");
+  if (record.lines.some((line) => Number(line.unitPrice) < 0)) errors.push("Rates cannot be negative.");
+  const existing = existingId ? getMenuById(existingId) : null;
+  if (existing) {
+    const nextLineIds = new Set(record.lines.map((line) => line.id));
+    const removedUsedLine = (existing.lines || []).find((line) => !nextLineIds.has(line.id) && isMenuLineUsedInTransactions(existingId, line));
+    if (removedUsedLine) errors.push(`${removedUsedLine.itemCode} is used by loading sheets or transaction snapshots. Deactivate the line instead of removing it.`);
+  }
+  return unique(errors);
+}
+
+function validateMapping(record, existingId = "") {
+  const errors = [];
+  const flight = getFlightMasterById(record.flightMasterId);
+  const menu = getMenuById(record.menuId);
+  if (!flight) errors.push("Flight Master is required.");
+  if (!menu) errors.push("Menu Master is required.");
+  if (flight && flight.status !== "Active") errors.push("Mapping must reference an active Flight Master.");
+  if (menu && menu.status !== "Active") errors.push("Mapping must reference an active Menu Master.");
+  if (record.effectiveFrom && record.effectiveTo && new Date(record.effectiveFrom) > new Date(record.effectiveTo)) errors.push("Effective dates are invalid.");
+  const overlap = state.masters.flightMenuMappings.some((item) => item.id !== existingId && item.status === "Active" && record.status === "Active" && item.flightMasterId === record.flightMasterId && item.serviceType === record.serviceType && periodsOverlap(item.effectiveFrom, item.effectiveTo, record.effectiveFrom, record.effectiveTo));
+  if (overlap) errors.push("An overlapping active mapping exists for this flight, route, service, and period.");
+  return unique(errors);
+}
+
+function validateAncillary(record, existingId = "") {
+  const errors = [];
+  if (!record.itemCode) errors.push("Item code is required.");
+  if (!record.itemName) errors.push("Item name is required.");
+  if (!record.unit) errors.push("Unit is required.");
+  if (state.masters.ancillaryItems.some((item) => item.id !== existingId && item.itemCode === record.itemCode)) errors.push("Item code must be unique.");
+  if (Number(record.unitRate) < 0) errors.push("Rate cannot be negative.");
+  const rule = record.calculationRule || {};
+  ["quantityPerPax", "paxDivisor", "fixedQuantity", "bufferPercentage", "minimumQuantity"].forEach((field) => {
+    if (Number(rule[field] || 0) < 0) errors.push("Rule values cannot be negative.");
+  });
+  if (rule.calculationType === "per_x_pax" && Number(rule.paxDivisor || 0) <= 0) errors.push("One unit per X passengers requires a positive paxDivisor.");
+  return unique(errors);
+}
+
+function validateLoadingSheet(record, existingId = "") {
+  const errors = [];
+  const flight = getFlightMasterById(record.flightMasterId);
+  const menu = getMenuById(record.menuId);
+  if (!flight) errors.push("Flight Master is required.");
+  if (!menu) errors.push("Menu Master is required.");
+  if (!record.lines.length) errors.push("At least one active loading line is required.");
+  if (record.effectiveFrom && record.effectiveTo && new Date(record.effectiveFrom) > new Date(record.effectiveTo)) errors.push("Effective dates are invalid.");
+  const validLineIds = new Set((menu?.lines || []).map((line) => line.id));
+  if (record.lines.some((line) => !validLineIds.has(line.menuLineId))) errors.push("Every loading line must reference a valid menu line from the selected menu.");
+  const percentageTotal = record.lines.filter((line) => line.ratioType === "percentage_split").reduce((sum, line) => sum + Number(line.ratioValue || 0), 0);
+  if (percentageTotal && percentageTotal !== 100) errors.push("Percentage-based standard meal splits must total 100%.");
+  const overlap = state.masters.loadingSheets.some((item) => item.id !== existingId && item.status === "Active" && record.status === "Active" && item.flightMasterId === record.flightMasterId && item.menuId === record.menuId && item.mealType === record.mealType && periodsOverlap(item.effectiveFrom, item.effectiveTo, record.effectiveFrom, record.effectiveTo));
+  if (overlap) errors.push("Only one active Loading Sheet can apply to the same flight, menu, service, and date range.");
+  return unique(errors);
+}
+
+function isMenuLineUsedInTransactions(menuId, line) {
+  return state.masters.loadingSheets.some((sheet) => sheet.menuId === menuId && sheet.lines?.some((sheetLine) => sheetLine.menuLineId === line.id || sheetLine.menuItemCode === line.itemCode))
+    || state.dailyOperations.some((operation) => operation.menuId === menuId && (
+      operation.kotSnapshot?.productionPlanSnapshot?.mealLines?.some((meal) => meal.menuLineId === line.id || meal.code === line.itemCode)
+      || operation.productionPlanSnapshot?.mealLines?.some((meal) => meal.menuLineId === line.id || meal.code === line.itemCode)
+    ))
+    || state.challans.some((challan) => challan.menuSnapshot?.id === menuId && challan.mealLinesSnapshot?.some((meal) => meal.menuLineId === line.id || meal.code === line.itemCode))
+    || state.invoices.some((invoice) => invoice.menuSnapshot?.id === menuId && invoice.mealInvoiceLinesSnapshot?.some((meal) => meal.sourceMasterId === line.id || meal.itemCode === line.invoiceItemCode || meal.itemCode === line.itemCode));
+}
+
+function checkEntityDependencies(key, id) {
+  const deps = [];
+  if (key === "flights") {
+    if (state.masters.flightMenuMappings.some((item) => item.flightMasterId === id)) deps.push("Flight-Menu Mapping");
+    if (state.masters.loadingSheets.some((item) => item.flightMasterId === id)) deps.push("Loading Sheet Master");
+    if (state.dailyOperations.some((item) => item.flightMasterId === id || item.flightSnapshot?.id === id || item.kotSnapshot?.flightMasterId === id)) deps.push("Daily Operation / KOT");
+    if (state.challans.some((item) => item.flightSnapshot?.id === id || item.sourceKotSnapshot?.flightMasterId === id)) deps.push("Delivery Challan");
+    if (state.invoices.some((item) => item.flightSnapshot?.id === id)) deps.push("Invoice");
+  }
+  if (key === "menus") {
+    if (state.masters.flightMenuMappings.some((item) => item.menuId === id)) deps.push("Flight-Menu Mapping");
+    if (state.masters.loadingSheets.some((item) => item.menuId === id)) deps.push("Loading Sheet Master");
+    if (state.dailyOperations.some((item) => item.menuId === id || item.menuSnapshot?.id === id || item.kotSnapshot?.menuId === id)) deps.push("Daily Operation / KOT");
+    if (state.challans.some((item) => item.menuSnapshot?.id === id || item.sourceKotSnapshot?.menuId === id)) deps.push("Delivery Challan");
+    if (state.invoices.some((item) => item.menuSnapshot?.id === id)) deps.push("Invoice");
+  }
+  if (key === "flightMenuMappings") {
+    if (state.dailyOperations.some((item) => item.mappingId === id || item.mappingSnapshot?.id === id || item.kotSnapshot?.mappingId === id)) deps.push("Daily Operation / KOT");
+    if (state.challans.some((item) => item.sourceKotSnapshot?.mappingId === id)) deps.push("Delivery Challan");
+    if (state.invoices.some((item) => item.sourceKotSnapshot?.mappingId === id)) deps.push("Invoice");
+  }
+  if (key === "ancillaryItems") {
+    const item = getAncillaryById(id);
+    if (state.dailyOperations.some((operation) => operation.ancillaryItemIds?.includes(id) || operation.ancillarySnapshots?.some((row) => row.id === id) || operation.kotSnapshot?.ancillaryItemIds?.includes(id))) deps.push("Daily Operation / KOT");
+    if (state.challans.some((challan) => challan.ancillaryLinesSnapshot?.some((row) => row.sourceMasterId === id || row.itemCode === item?.itemCode))) deps.push("Delivery Challan");
+    if (state.invoices.some((invoice) => invoice.ancillaryInvoiceLinesSnapshot?.some((row) => row.sourceMasterId === id || row.itemCode === item?.invoiceItemCode))) deps.push("Invoice");
+  }
+  if (key === "loadingSheets") {
+    if (state.dailyOperations.some((item) => item.loadingSheetId === id || item.loadingSheetSnapshot?.id === id || item.kotSnapshot?.loadingSheetId === id)) deps.push("Daily Operation / KOT");
+    if (state.challans.some((item) => item.loadingSheetSnapshot?.id === id || item.sourceKotSnapshot?.loadingSheetId === id)) deps.push("Delivery Challan");
+    if (state.invoices.some((item) => item.loadingSheetSnapshot?.id === id)) deps.push("Invoice");
+  }
+  return unique(deps);
+}
+
+function deleteBlockReason(key, id) {
+  const deps = checkEntityDependencies(key, id);
+  if (deps.length) return `This record is referenced by ${deps.join(", ")}. Deactivate it instead.`;
+  return "";
+}
+
+function ruleLabel(rule = {}) {
+  const labels = {
+    fixed: "Fixed quantity",
+    per_passenger: "Per passenger",
+    per_crew: "Per crew member",
+    per_business_pax: "Per Business pax",
+    per_premium_pax: "Per Premium pax",
+    per_economy_pax: "Per Economy pax",
+    per_x_pax: "One unit per X pax",
+    buffer: "Percentage buffer",
+    minimum: "Minimum quantity",
+    manual: "Manual quantity",
+    fixed_plus_per_pax: "Fixed plus per pax"
+  };
+  return labels[rule.calculationType] || rule.calculationType || "Manual quantity";
 }
 
 function renderPlanning() {
@@ -924,40 +3490,47 @@ function validationList(stage, flight = selectedFlight()) {
 
 function renderQueue() {
   const filters = state.queueFilters;
-  const filteredFlights = state.flights.filter((flight) => {
-    const statusMatch = filters.status === "All Status" || [flight.kot, flight.meal, flight.dispatch, flight.production].some((value) => value.toLowerCase() === filters.status.toLowerCase());
+  generateDailyOperations(state.operatingDate, state, true);
+  const operations = operationsForSelectedDate();
+  const filteredFlights = operations.filter((flight) => {
+    const statusMatch = filters.status === "All Status" || [flight.kot, flight.meal, flight.dispatch, flight.production].some((value) => String(value).toLowerCase() === filters.status.toLowerCase());
+    const configMatch = filters.configStatus === "All Config" || flight.configurationStatus === filters.configStatus;
     const airlineMatch = filters.airline === "All Airlines" || flight.airline === filters.airline;
     const sectorMatch = filters.sector === "All Sectors" || flight.sector === filters.sector;
     const query = filters.search.trim().toLowerCase();
-    const queryMatch = !query || `${flight.flightNo} ${flight.airline} ${flight.sector} ${flight.aircraft}`.toLowerCase().includes(query);
-    return statusMatch && airlineMatch && sectorMatch && queryMatch;
+    const queryMatch = !query || `${flight.flightNo} ${flight.airline} ${flight.sector} ${flight.aircraft} ${flight.configurationStatus}`.toLowerCase().includes(query);
+    return statusMatch && configMatch && airlineMatch && sectorMatch && queryMatch;
   });
-  const totals = state.flights.reduce((acc, flight) => {
-    acc.j += flight.j;
+  const totals = operations.reduce((acc, flight) => {
+    acc.flights += 1;
+    acc.ready += flight.configurationStatus === "Ready" ? 1 : 0;
+    acc.j += Number(flight.businessPax || 0);
     acc.y += finalPassengerCount(flight);
-    acc.tc += flight.tc;
-    acc.cc += flight.cc;
+    acc.tc += Number(flight.technicalCrew || 0);
+    acc.cc += Number(flight.cabinCrew || 0);
     return acc;
-  }, { j: 0, y: 0, tc: 0, cc: 0 });
-  const totalMeals = state.flights.reduce((sum, flight) => sum + calculatedKot(flight).totalMeals, 0);
+  }, { flights: 0, ready: 0, j: 0, y: 0, tc: 0, cc: 0 });
+  const totalMeals = operations.reduce((sum, flight) => sum + calculatedKot(flight).totalMeals, 0);
+  const nextDispatch = operations[0]?.flightSnapshot?.dispatchTime || operations[0]?.std || "-";
   const body = `
     <section class="content">
       <div class="kpi-grid">
-        ${kpi("FL", "Total Flights", "18", "Today")}
+        ${kpi("FL", "Total Flights", totals.flights, state.operatingDate)}
         ${kpi("PX", "Final Pax", totals.y.toLocaleString(), "Confirmed + addl.", "green")}
-        ${kpi("ML", "Calculated Meals", totalMeals.toLocaleString(), "Today", "amber")}
-        ${kpi("CR", "Total Crew (TC+CC)", "192", "Today", "purple")}
-        ${kpi("ND", "Next Dispatch", "00:45", "FZ 576 (11:30)")}
-        ${kpi("OT", "On Time", "16", "Flights", "green")}
-        ${kpi("DL", "Delayed", "2", "Flights", "red")}
+        ${kpi("ML", "Calculated Qty", totalMeals.toLocaleString(), "From loading sheets", "amber")}
+        ${kpi("CR", "Total Crew (TC+CC)", String(totals.tc + totals.cc), "Selected date", "purple")}
+        ${kpi("RD", "Config Ready", totals.ready, "Can confirm KOT", totals.ready === totals.flights ? "green" : "amber")}
+        ${kpi("ND", "Next Dispatch", nextDispatch, operations[0]?.flightNo || "-")}
+        ${kpi("EX", "Config Warnings", totals.flights - totals.ready, "Blocks confirmation", totals.ready === totals.flights ? "green" : "red")}
       </div>
       <div class="toolbar">
-        <input class="field" value="15/06/2026" aria-label="Date">
-        <select class="field" onchange="setQueueFilter('status', this.value)">${["All Status", "Pending", "Confirmed", "In Progress", "Scheduled", "Calculated", "Dispatched"].map((item) => `<option ${filters.status === item ? "selected" : ""}>${item}</option>`).join("")}</select>
-        <select class="field" onchange="setQueueFilter('airline', this.value)">${["All Airlines", ...new Set(state.flights.map((flight) => flight.airline))].map((item) => `<option ${filters.airline === item ? "selected" : ""}>${item}</option>`).join("")}</select>
-        <select class="field" onchange="setQueueFilter('sector', this.value)">${["All Sectors", ...new Set(state.flights.map((flight) => flight.sector))].map((item) => `<option ${filters.sector === item ? "selected" : ""}>${item}</option>`).join("")}</select>
+        <input class="field" type="date" value="${escapeHtml(state.operatingDate)}" aria-label="Operating date" onchange="setOperatingDate(this.value)">
+        <select class="field" onchange="setQueueFilter('configStatus', this.value)">${["All Config", "Ready", "Missing Menu Mapping", "Missing Menu", "Missing Loading Sheet", "Missing Pricing", "Invalid Ratios", "Inactive Master"].map((item) => `<option ${filters.configStatus === item ? "selected" : ""}>${item}</option>`).join("")}</select>
+        <select class="field" onchange="setQueueFilter('status', this.value)">${["All Status", "Draft", "Calculated", "Confirmed", "Sent to Kitchen", "In Progress", "Prepared", "Approved", "Dispatched", "Pending"].map((item) => `<option ${filters.status === item ? "selected" : ""}>${item}</option>`).join("")}</select>
+        <select class="field" onchange="setQueueFilter('airline', this.value)">${["All Airlines", ...new Set(operations.map((flight) => flight.airline))].map((item) => `<option ${filters.airline === item ? "selected" : ""}>${item}</option>`).join("")}</select>
+        <select class="field" onchange="setQueueFilter('sector', this.value)">${["All Sectors", ...new Set(operations.map((flight) => flight.sector))].map((item) => `<option ${filters.sector === item ? "selected" : ""}>${item}</option>`).join("")}</select>
         <input class="search" value="${escapeHtml(filters.search)}" placeholder="Search flight no, airline, sector..." oninput="state.queueFilters.search=this.value;saveState();filterRows(this.value)">
-        <button class="btn" onclick="render()">Refresh</button>
+        <button class="btn" onclick="generateDailyOperations(state.operatingDate);saveState();render()">Generate / Refresh</button>
         <button class="btn icon-btn" onclick="resetDemo()" title="Reset local demo data">RS</button>
       </div>
       <div class="table-wrap">
@@ -965,17 +3538,16 @@ function renderQueue() {
           <thead>
             <tr>
               <th>STD</th><th>Flight No.</th><th>Airline</th><th>Sector</th><th>Aircraft</th>
-              <th colspan="5" class="num">Pax on Board</th><th>Menu Cycle</th><th>KOT Status</th><th>Meal Status</th><th>Dispatch Status</th><th>Action</th>
+              <th>Capacity</th><th class="num">Confirmed</th><th class="num">Special</th><th class="num">Final</th><th>Assigned Menu</th><th>Loading Sheet</th><th>KOT Status</th><th>Kitchen</th><th>Dispatch</th><th>Configuration</th><th>Action</th>
             </tr>
-            <tr><th></th><th></th><th></th><th></th><th></th><th class="num">J</th><th class="num">Y</th><th class="num">TC</th><th class="num">CC</th><th class="num">Total</th><th></th><th></th><th></th><th></th><th></th></tr>
           </thead>
           <tbody>
-            ${filteredFlights.map(queueRow).join("") || `<tr><td colspan="15" class="empty-state">No flights match the selected filters.</td></tr>`}
-            <tr class="total-row"><td colspan="5">Total Flights: 18</td><td class="num">${totals.j}</td><td class="num">${totals.y.toLocaleString()}</td><td class="num">${totals.tc}</td><td class="num">${totals.cc}</td><td class="num">${(totals.j + totals.y + totals.tc + totals.cc).toLocaleString()}</td><td colspan="5"></td></tr>
+            ${filteredFlights.map(queueRow).join("") || `<tr><td colspan="16" class="empty-state">No daily operations match the selected filters.</td></tr>`}
+            <tr class="total-row"><td colspan="6">Total Operations: ${totals.flights}</td><td class="num">${totals.y.toLocaleString()}</td><td class="num">${operations.reduce((sum, item) => sum + specialMealTotal(item), 0)}</td><td class="num">${totals.y.toLocaleString()}</td><td colspan="7"></td></tr>
           </tbody>
         </table>
       </div>
-      <div class="footer-note">Note: Planning owns airline, schedule, menu and ratio setup. Operations updates confirmed pax, additions, special meals and ancillaries only.</div>
+      <div class="footer-note">Daily operations are unique by operating date and Flight Master. Draft operations can refresh from masters; confirmed KOT snapshots stay frozen.</div>
     </section>
   `;
   return layout("Operations Flight Queue", "Manage KOT, Meal Production & Delivery", body);
@@ -989,18 +3561,23 @@ function kpi(icon, label, value, sub, tone = "blue") {
 function queueRow(flight) {
   const calc = calculatedKot(flight);
   return `
-    <tr data-search="${`${flight.flightNo} ${flight.airline} ${flight.sector}`.toLowerCase()}">
+    <tr data-search="${`${flight.flightNo} ${flight.airline} ${flight.sector} ${flight.configurationStatus}`.toLowerCase()}">
       <td class="blue-text">${flight.std}</td>
       <td><strong>${flight.flightNo}</strong></td>
       <td><span class="logo-airline ${flight.airlineClass}">${flight.airline}</span></td>
       <td>${flight.sector}</td>
       <td>${flight.aircraft}</td>
-      <td class="num">${flight.j}</td><td class="num">${calc.finalPax}</td><td class="num">${flight.tc}</td><td class="num">${flight.cc}</td><td class="num"><strong>${calc.finalPax + flight.tc + flight.cc}</strong></td>
-      <td>${flight.mealPlan}</td>
+      <td>${flight.capacity}</td>
+      <td class="num">${flight.confirmedPax}</td>
+      <td class="num">${specialMealTotal(flight)}</td>
+      <td class="num"><strong>${calc.finalPax}</strong></td>
+      <td>${flight.menuSnapshot?.menuCode || "-"}</td>
+      <td>${flight.loadingSheetSnapshot?.loadingSheetCode || "-"}</td>
       <td>${badge(flight.kot)}</td>
-      <td>${badge(flight.meal)}</td>
+      <td>${badge(flight.kitchenStatus || flight.production)}</td>
       <td>${badge(flight.dispatch)}</td>
-      <td><button class="btn green" onclick="setSelectedFlight('${flight.flightNo}', 'kot')">${flight.kot === "confirmed" ? "View KOT" : "Open KOT"}</button> <button class="btn icon-btn" onclick="openFlightModal('${flight.flightNo}')">⋮</button></td>
+      <td>${badge(flight.configurationStatus)}</td>
+      <td><button class="btn green" onclick="setSelectedOperation('${flight.id}', 'kot')">${isKotLocked(flight) ? "View KOT" : "Open KOT"}</button> <button class="btn icon-btn" onclick="openFlightModal('${flight.id}')">...</button></td>
     </tr>
   `;
 }
@@ -1016,6 +3593,7 @@ function renderKot() {
   const flight = selectedFlight();
   const step = state.kotStep;
   const calc = calculatedKot(flight);
+  const canRefresh = flight.flightSnapshot && !isKotLocked(flight);
   const body = `
     <div class="flight-header">
       <div><button class="btn" onclick="setScreen('queue')">Back to Flight List</button></div>
@@ -1032,13 +3610,15 @@ function renderKot() {
       <div class="grid-2">
         <div>${kotStageContent(step, flight)}</div>
         <aside>
-          ${sidePanel("Key Timings", [["Hot Meal Dish Out", "13:15"], ["Cold Meal Prep.", "13:00"], ["Dispatch Time", "14:45"]])}
-          ${sidePanel("Other Info", [["Loading Bay", "02"], ["Gate Type", "Wide Body"], ["Uplift Type", "Full Uplift"], ["Prepared By", "operations1"], ["Prepared On", "15/06/2026 10:24"]])}
+          ${sidePanel("Configuration", [["Status", badge(flight.configurationStatus || "Ready")], ["Messages", (flight.configurationMessages || []).join("<br>") || "Ready"], ["Menu", flight.menuSnapshot?.menuCode || "-"], ["Loading Sheet", flight.loadingSheetSnapshot?.loadingSheetCode || "-"]])}
+          ${sidePanel("Key Timings", [["Hot Meal Dish Out", flight.flightSnapshot?.hotMealDishOutTime || "13:15"], ["Cold Meal Prep.", flight.flightSnapshot?.coldMealPreparationTime || "13:00"], ["Dispatch Time", flight.flightSnapshot?.dispatchTime || "14:45"]])}
+          ${sidePanel("Other Info", [["Loading Bay", flight.flightSnapshot?.loadingBay || "02"], ["Gate Type", flight.flightSnapshot?.gateType || "Wide Body"], ["Uplift Type", flight.flightSnapshot?.upliftType || "Full Uplift"], ["Prepared By", "operations1"], ["Prepared On", nowStamp()]])}
           ${step < 5 ? `<div class="panel">
             <h2>Stage Actions</h2>
             <div class="actions-stack">
               <button class="btn navy" onclick="saveDraft()">Save Draft</button>
-              ${step === 4 ? `<button class="btn green" onclick="calculateMeals()">Approve Ancillaries</button>` : ""}
+              ${canRefresh ? `<button class="btn" onclick="refreshOperationFromMasters('${flight.id}');saveState();showToast('Draft refreshed from masters.');render()">Refresh from Masters</button>` : ""}
+              ${step === 4 ? `<button class="btn green" onclick="calculateMeals()">Recalculate</button>` : ""}
             </div>
           </div>` : ""}
         </aside>
@@ -1054,25 +3634,31 @@ function kotStageContent(step, flight) {
   const stages = [
     () => `
       <div class="panel kot-stage">
-        <h2>Flight Information</h2>
-        <div class="notice compact-notice"><span class="check">✓</span><div><b>Loaded from planning setup</b><br><span class="muted">Operations cannot change airline master, menu plan, ratio or flight schedule from this KOT.</span></div></div>
+        <h2>Master Data and Flight Information</h2>
+        <div class="notice compact-notice"><span class="check">${flight.configurationStatus === "Ready" ? "✓" : "!"}</span><div><b>${escapeHtml(flight.configurationStatus || "Ready")}</b><br><span class="muted">Operations cannot change airline, schedule, menu, mapping, loading sheet, or master rates inside KOT.</span></div></div>
         <div class="form-grid">
-          ${readonlyField("Date", state.kot.date)}
+          ${readonlyField("Operation Date", flight.operationDate || state.operatingDate)}
           ${readonlyField("Flight No.", flight.flightNo)}
           ${readonlyField("Airline", flight.airline)}
+          ${readonlyField("Origin", flight.origin)}
+          ${readonlyField("Destination", flight.destination)}
           ${readonlyField("Registration", flight.reg)}
           ${readonlyField("Aircraft Type", flight.aircraft)}
           ${readonlyField("Aircraft Capacity", flight.capacity)}
           ${readonlyField("Sector", flight.sector)}
           ${readonlyField("Departure / Arrival", `${flight.std} / ${flight.arrivalTime}`)}
           ${readonlyField("Days of Operation", flight.operatingDays.join(", "))}
-          ${readonlyField("Menu Plan", flight.mealPlan)}
-          ${readonlyField("Meal Ratio", flight.ratioRule)}
-          ${readonlyField("Rounding Rule", flight.roundingRule)}
+          ${readonlyField("Menu Code", flight.menuSnapshot?.menuCode || "-")}
+          ${readonlyField("Menu Name", flight.menuSnapshot?.menuName || "-")}
+          ${readonlyField("Mapping Code", flight.mappingSnapshot?.mappingCode || "-")}
+          ${readonlyField("Loading Sheet Code", flight.loadingSheetSnapshot?.loadingSheetCode || "-")}
+          ${readonlyField("Loading Sheet Version", flight.loadingSheetSnapshot?.version || "-")}
+          ${readonlyField("Service Type", flight.mappingSnapshot?.serviceType || flight.menuSnapshot?.serviceType || "-")}
         </div>
-        <div class="form-grid two" style="margin-top:14px">
-          ${readonlyField("Uplift: 1st Service", state.kot.firstUplift)}
-          ${readonlyField("Uplift: 2nd Service", state.kot.secondUplift)}
+        <div class="paper-grid three" style="margin-top:14px">
+          ${sidePanel("Flight Master", [["Effective", `${flight.flightSnapshot?.effectiveFrom || "-"} to ${flight.flightSnapshot?.effectiveTo || "-"}`], ["Capacity by class", `J ${flight.flightSnapshot?.businessCapacity || 0} / W ${flight.flightSnapshot?.premiumEconomyCapacity || 0} / Y ${flight.flightSnapshot?.economyCapacity || 0}`]])}
+          ${sidePanel("Menu and Mapping", [["Mapping", flight.mappingSnapshot?.mappingCode || "-"], ["Menu", flight.menuSnapshot?.menuCode || "-"], ["Effective", `${flight.mappingSnapshot?.effectiveFrom || "-"} to ${flight.mappingSnapshot?.effectiveTo || "-"}`]])}
+          ${sidePanel("Loading and Ancillary", [["Loading Sheet", flight.loadingSheetSnapshot?.loadingSheetCode || "-"], ["Version", flight.loadingSheetSnapshot?.version || "-"], ["Ancillary Items", flight.ancillarySnapshots?.length || 0]])}
         </div>
       </div>
     `,
@@ -1084,38 +3670,44 @@ function kotStageContent(step, flight) {
           ${readonlyField("Flight Capacity", flight.capacity)}
           ${formField("Confirmed Passenger Count", flight.confirmedPax, "updateFlightField('confirmedPax', this.value)")}
           ${formField("Additional Passenger Count", flight.additionalPax, "updateFlightField('additionalPax', this.value)")}
+          ${formField("Business Class Pax", flight.businessPax || 0, "updateFlightField('businessPax', this.value)")}
+          ${formField("Premium Economy Pax", flight.premiumEconomyPax || 0, "updateFlightField('premiumEconomyPax', this.value)")}
+          ${formField("Economy Class Pax", flight.economyPax || 0, "updateFlightField('economyPax', this.value)")}
+          ${formField("Technical Crew", flight.technicalCrew || flight.tc || 0, "updateFlightField('technicalCrew', this.value)")}
+          ${formField("Cabin Crew", flight.cabinCrew || flight.cc || 0, "updateFlightField('cabinCrew', this.value)")}
+          ${formField("Special Passenger Count", flight.specialPassengerCount || 0, "updateFlightField('specialPassengerCount', this.value)")}
           ${readonlyField("Final Passenger Count", finalPassengerCount(flight))}
           ${readonlyField("Crew Count", crewCount(flight))}
-          ${readonlyField("KOT Source", "Planning template")}
+          ${readonlyField("Total Persons on Board", finalPassengerCount(flight) + crewCount(flight))}
+          ${readonlyField("Remaining Capacity", Number(flight.capacity || 0) - finalPassengerCount(flight))}
         </div>
+        <label class="muted" style="display:block;margin-top:16px">Operational Remarks</label>
+        <textarea onchange="updateFlightField('operationalRemarks', this.value)">${escapeHtml(flight.operationalRemarks || "")}</textarea>
         <div style="margin-top:14px">${validationList("kot", flight)}</div>
-      </div>
-    `,
-    () => `
-      <div class="panel kot-stage">
-        <div class="panel-head"><h2>Automatic Meal Calculation</h2><button class="btn" onclick="setScreen('loading-preview')">Open Chart Preview</button></div>
-        <div class="notice compact-notice"><span class="check">✓</span><div><b>Calculated from final pax and planning ratio</b><br><span class="muted">Special meals are included inside final pax by default, then standard meals are split by ratio.</span></div></div>
-        ${dynamicMealCalculationTable(flight)}
-        <div style="margin-top:14px">${validationList("calculation", flight)}</div>
-        <div class="panel-subsection">
-          <div class="panel-head"><h2>Special Meals</h2><span class="badge progress">User editable</span></div>
-          ${specialMealsTable(true)}
-        </div>
       </div>
     `,
     () => `
       <div class="panel kot-stage">
         <h2>Special Meals</h2>
         ${specialMealsTable(true)}
+        <div style="margin-top:14px">${validationList("special", flight)}</div>
         <label class="muted" style="display:block;margin-top:16px">Remarks / Instructions</label>
         <textarea id="remarks" onchange="updateFlightField('operationalRemarks', this.value)">${escapeHtml(flight.operationalRemarks)}</textarea>
       </div>
     `,
     () => `
       <div class="panel kot-stage">
-        <div class="panel-head"><h2>Ancillaries Review & Approval</h2><button class="btn green" onclick="calculateMeals()">Auto Calculate</button></div>
+        <div class="panel-head"><h2>Ancillary Review and Overrides</h2><button class="btn green" onclick="calculateMeals()">Recalculate</button></div>
         ${dynamicAncillaryTable(flight, true)}
-        <div class="notice" style="margin-top:14px"><span class="check">✓</span><div><b>Review generated ancillary counts</b><br><span class="muted">Approve this stage after validating first and second service quantities.</span></div></div>
+        <div style="margin-top:14px">${validationList("ancillary", flight)}</div>
+      </div>
+    `,
+    () => `
+      <div class="panel kot-stage">
+        <div class="panel-head"><h2>Automatic Meal Calculation</h2><button class="btn" onclick="setScreen('loading-preview')">Open Chart Preview</button></div>
+        <div class="notice compact-notice"><span class="check">✓</span><div><b>Calculated from operation snapshot</b><br><span class="muted">Loading sheet, menu pricing, special meals, cabin counts, and ancillaries are calculated together.</span></div></div>
+        ${dynamicMealCalculationTable(flight)}
+        <div style="margin-top:14px">${validationList("calculation", flight)}</div>
       </div>
     `,
     () => `
@@ -1129,6 +3721,7 @@ function kotStageContent(step, flight) {
           ${specialMealsTable()}
         </div>
         <div style="margin-top:14px">${dynamicAncillaryTable(flight)}</div>
+        <div style="margin-top:14px">${validationList("calculation", flight)}</div>
       </div>
     `
   ];
@@ -1140,7 +3733,7 @@ function kotStageFooter(step) {
     <div class="stage-footer">
       <button class="btn" onclick="setKotStep(${step - 1})" ${step === 0 ? "disabled" : ""}>Previous</button>
       <span class="muted">Stage ${step + 1} of ${KOT_STEPS.length}: ${KOT_STEPS[step]}</span>
-      ${step < KOT_STEPS.length - 1 ? `<button class="btn green" onclick="setKotStep(${step + 1})">Next Stage</button>` : `<button class="btn blue" onclick="generateChallan()">Generate Challan</button>`}
+      ${step < KOT_STEPS.length - 1 ? `<button class="btn green" onclick="setKotStep(${step + 1})">Next Stage</button>` : `<span><button class="btn green" onclick="confirmKot()">Confirm KOT</button> <button class="btn blue" onclick="sendToKitchen()">Send to Kitchen</button> <button class="btn" onclick="generateChallan()">Generate Challan</button></span>`}
     </div>
   `;
 }
@@ -1187,14 +3780,19 @@ function mealTable(title, rows, editable = false, key = "") {
 
 function dynamicMealCalculationTable(flight = selectedFlight()) {
   const calc = calculatedKot(flight);
+  return mealSnapshotTable(calc.meals, calc.specialMealLines || [], flight.specialMealRule, calc.totalMeals, calc.finalPax);
+}
+
+function mealSnapshotTable(meals = [], specialMealLines = [], specialMealRule = "", totalMeals = 0, finalPax = 0) {
+  const specialTotal = specialMealLines.reduce((sum, line) => sum + Number(line.quantity || 0), 0);
   return `
     <div class="table-wrap">
       <table class="compact-table meal-table">
         <thead><tr><th>Meal Code</th><th>Meal Type</th><th>Menu Item</th><th>Ratio</th><th class="num">Calculated Qty</th><th>Rate Master</th></tr></thead>
         <tbody>
-          ${calc.meals.map((meal) => `<tr><td>${meal.code}</td><td>${meal.type}</td><td>${meal.name}</td><td>${meal.ratio}</td><td class="num"><strong>${meal.qty}</strong></td><td>${meal.rateCode} @ ${Number(meal.rate).toFixed(2)}</td></tr>`).join("")}
-          <tr><td>SPML</td><td>Special Meals</td><td>Airline supplied special meal count</td><td>${flight.specialMealRule}</td><td class="num"><strong>${calc.specialMeals}</strong></td><td>MEAL-SPML @ 8.64</td></tr>
-          <tr class="total-row"><td colspan="4">Total Meals To Prepare</td><td class="num">${calc.totalMeals}</td><td>Final pax: ${calc.finalPax}</td></tr>
+          ${meals.map((meal) => `<tr><td>${escapeHtml(meal.code)}</td><td>${escapeHtml(meal.type)}</td><td>${escapeHtml(meal.name)}</td><td>${escapeHtml(meal.ratio)}</td><td class="num"><strong>${meal.qty}</strong></td><td>${escapeHtml(meal.rateCode || meal.code)} @ ${Number(meal.rate || 0).toFixed(2)}</td></tr>`).join("")}
+          <tr><td>SPML</td><td>Special Meals</td><td>Airline supplied special meal count</td><td>${escapeHtml(specialMealRule || "Replacement special meals")}</td><td class="num"><strong>${specialTotal}</strong></td><td>Menu snapshot only</td></tr>
+          <tr class="total-row"><td colspan="4">Total Meals To Prepare</td><td class="num">${totalMeals}</td><td>Final pax: ${finalPax}</td></tr>
         </tbody>
       </table>
     </div>
@@ -1203,6 +3801,20 @@ function dynamicMealCalculationTable(flight = selectedFlight()) {
 
 function specialMealsTable(editable = false) {
   const flight = selectedFlight();
+  const rows = specialMealEntries(flight);
+  if (flight?.flightSnapshot) {
+    return `
+      <div class="table-wrap">
+        <table class="compact-table special-meals-table">
+          <thead><tr><th>Code</th><th>Description</th><th class="num">Quantity</th><th>Included in Pax</th><th>Additional Uplift</th><th>Remarks</th></tr></thead>
+          <tbody>
+            ${rows.map((row) => `<tr><td><strong>${row.code}</strong></td><td>${row.description}</td><td class="num">${editable ? `<input class="mini-input" value="${row.quantity}" onchange="updateSpecialMeal('${row.code}', this.value)">` : row.quantity}</td><td>Yes</td><td>No</td><td>${escapeHtml(row.remarks || "")}</td></tr>`).join("")}
+            <tr class="total-row"><td colspan="2">Total Special Meals</td><td class="num">${rows.reduce((sum, row) => sum + row.quantity, 0)}</td><td colspan="3">Replacement meals reduce standard meal passenger count.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    `;
+  }
   const meals = flight.specialMeals || state.kot.specialMeals;
   const keys = Object.keys(meals);
   const values = Object.values(meals);
@@ -1214,8 +3826,46 @@ function specialMealsTable(editable = false) {
   `;
 }
 
+function specialMealsSnapshotTable(rows = []) {
+  return `
+    <div class="table-wrap">
+      <table class="compact-table special-meals-table">
+        <thead><tr><th>Code</th><th>Description</th><th class="num">Quantity</th><th>Included in Pax</th><th>Additional Uplift</th><th>Remarks</th></tr></thead>
+        <tbody>
+          ${rows.map((row) => `<tr><td><strong>${escapeHtml(row.code)}</strong></td><td>${escapeHtml(row.description)}</td><td class="num">${Number(row.quantity || 0)}</td><td>${row.includedInPassengerCount ? "Yes" : "No"}</td><td>${row.additionalUplift ? "Yes" : "No"}</td><td>${escapeHtml(row.remarks || "")}</td></tr>`).join("") || `<tr><td colspan="6" class="empty-state">No special meals in this snapshot.</td></tr>`}
+          <tr class="total-row"><td colspan="2">Total Special Meals</td><td class="num">${rows.reduce((sum, row) => sum + Number(row.quantity || 0), 0)}</td><td colspan="3">Stored from confirmed KOT snapshot.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
 function dynamicAncillaryTable(flight = selectedFlight(), editable = false) {
   const rows = calculatedAncillaries(flight);
+  return ancillarySnapshotTable(rows, editable);
+}
+
+function ancillarySnapshotTable(rows = [], editable = false) {
+  if (rows.length && rows[0].itemCode) {
+    return `
+      <div class="table-wrap">
+        <table class="compact-table ancillary-table">
+          <thead><tr><th>Item Code</th><th>Item Name</th><th>Unit</th><th>Master Rule</th><th class="num">Calculated</th><th>Override</th><th class="num">Final Qty</th><th class="num">Rate</th><th>Invoice</th></tr></thead>
+          <tbody>${rows.map((row, index) => `<tr>
+            <td>${escapeHtml(row.itemCode)}</td>
+            <td>${escapeHtml(row.itemName || row.item)}</td>
+            <td>${escapeHtml(row.unit)}</td>
+            <td>${escapeHtml(row.masterCalculationRule || row.rule || "")}</td>
+            <td class="num">${row.calculatedQuantity ?? row.qty}</td>
+            <td>${row.overrideAllowed && editable ? `<input class="mini-input" value="${escapeHtml(row.overrideQuantity)}" placeholder="Qty" onchange="updateAncillary(${index}, 'overrideQuantity', this.value)"> <input class="input cell-input" value="${escapeHtml(row.overrideReason)}" placeholder="Reason" onchange="updateAncillary(${index}, 'overrideReason', this.value)">` : row.overrideReason ? escapeHtml(row.overrideReason) : row.overrideAllowed ? "Allowed" : "Locked"}</td>
+            <td class="num"><strong>${row.finalQuantity ?? row.qty}</strong></td>
+            <td class="num">${Number(row.invoiceRate || row.unitRate || 0).toFixed(2)}</td>
+            <td>${row.invoiceEnabled ? "Yes" : "No"}</td>
+          </tr>`).join("")}</tbody>
+        </table>
+      </div>
+    `;
+  }
   return `
     <table class="compact-table ancillary-table">
       <thead><tr><th>Item</th><th>Unit</th><th>Rule</th><th class="num">Quantity</th></tr></thead>
@@ -1293,17 +3943,27 @@ function sidePanel(title, rows) {
 }
 
 function renderKotList() {
+  const filters = state.queueFilters;
+  const rows = operationsForSelectedDate().filter((operation) => ["Calculated", "Confirmed", "Sent to Kitchen", "In Progress", "Prepared", "Approved", "Dispatched"].includes(operation.kot) || operation.kotSnapshot);
   const body = `
     <section class="content">
       <div class="toolbar">
-        <input class="search" placeholder="Search KOT, flight, airline...">
-        <button class="btn green" onclick="setScreen('kot')">Open Selected KOT</button>
+        <input class="field" type="date" value="${escapeHtml(state.operatingDate)}" onchange="setOperatingDate(this.value)">
+        <select class="field" onchange="setQueueFilter('status', this.value)">${["All Status", "Calculated", "Confirmed", "Sent to Kitchen", "In Progress", "Prepared", "Approved", "Dispatched"].map((item) => `<option ${filters.status === item ? "selected" : ""}>${item}</option>`).join("")}</select>
+        <select class="field" onchange="setQueueFilter('airline', this.value)">${["All Airlines", ...new Set(operationsForSelectedDate().map((flight) => flight.airline))].map((item) => `<option ${filters.airline === item ? "selected" : ""}>${item}</option>`).join("")}</select>
+        <input class="search" value="${escapeHtml(filters.search)}" placeholder="Search KOT, flight, airline..." oninput="state.queueFilters.search=this.value;saveState();render()">
         <button class="btn" onclick="setScreen('kitchen')">Kitchen Board</button>
       </div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>KOT No.</th><th>Flight</th><th>Airline</th><th>Sector</th><th>STD</th><th>Status</th><th>Production</th><th>Action</th></tr></thead>
-          <tbody>${state.flights.map((flight, index) => `<tr><td>KOT-${String(index + 1).padStart(4, "0")}</td><td>${flight.flightNo}</td><td>${flight.airline}</td><td>${flight.sector}</td><td>${flight.std}</td><td>${badge(flight.kot)}</td><td>${badge(flight.production)}</td><td><button class="btn green" onclick="setSelectedFlight('${flight.flightNo}', 'kot')">Open</button></td></tr>`).join("")}</tbody>
+          <thead><tr><th>KOT No.</th><th>Date</th><th>Flight</th><th>Airline</th><th>Sector</th><th>STD</th><th>Menu</th><th>Status</th><th>Kitchen</th><th>Action</th></tr></thead>
+          <tbody>${rows.filter((flight) => {
+            const query = filters.search.trim().toLowerCase();
+            const queryMatch = !query || `${flight.flightNo} ${flight.airline} ${flight.sector} ${flight.kot}`.toLowerCase().includes(query);
+            const airlineMatch = filters.airline === "All Airlines" || flight.airline === filters.airline;
+            const statusMatch = filters.status === "All Status" || flight.kot === filters.status || flight.production === String(filters.status).toLowerCase();
+            return queryMatch && airlineMatch && statusMatch;
+          }).map((flight, index) => `<tr><td>KOT-${String(index + 1).padStart(4, "0")}</td><td>${flight.operationDate}</td><td>${flight.flightNo}</td><td>${flight.airline}</td><td>${flight.sector}</td><td>${flight.std}</td><td>${flight.kotSnapshot?.menuSnapshot?.menuCode || flight.menuSnapshot?.menuCode || "-"}</td><td>${badge(flight.kot)}</td><td>${badge(flight.kitchenStatus || flight.production)}</td><td><button class="btn green" onclick="setSelectedOperation('${flight.id}', 'kot')">Open</button></td></tr>`).join("") || `<tr><td colspan="10" class="empty-state">No KOT records match the current filters.</td></tr>`}</tbody>
         </table>
       </div>
     </section>`;
@@ -1327,7 +3987,7 @@ function renderKitchen() {
           <h2>Production Kitchen Display</h2>
           <span class="badge ${highLoadCount ? "pending" : "confirmed"}">${highLoadCount ? `${highLoadCount} high load alert` : "All loads normal"}</span>
         </div>
-        <div class="notice compact-notice"><span class="check">✓</span><div><b>Confirmed KOTs only</b><br><span class="muted">Any KOT update recalculates the shared flight data and refreshes this board.</span></div></div>
+        <div class="notice compact-notice"><span class="check">✓</span><div><b>Confirmed KOT snapshots only</b><br><span class="muted">Kitchen quantities remain frozen even if master data changes later.</span></div></div>
         <div class="kitchen-launch-grid">
           ${kpi("FL", "Upcoming Flights", String(rows.length), "Kitchen display")}
           ${kpi("PX", "Final Pax", totalPax.toLocaleString(), "Confirmed KOTs", "green")}
@@ -1376,7 +4036,7 @@ function kitchenBoardScreen() {
         ${kitchenKpi("ML", "Meals To Prepare", totalMeals.toLocaleString(), "", "amber")}
         ${kitchenKpi("CR", "Total Crew", String(totalCrew), "(TC + CC)", "purple")}
         ${kitchenKpi("ND", "Next Dispatch", rows[0]?.plan.dispatch || "-", rows[0]?.flight.flightNo || "", "cyan")}
-        ${kitchenKpi("OT", "Confirmed", String(rows.filter(({ flight }) => flight.kot === "confirmed").length), "", "cyan")}
+        ${kitchenKpi("OT", "Confirmed", String(rows.filter(({ flight }) => flight.kot === "Confirmed" || flight.kot === "Sent to Kitchen").length), "", "cyan")}
         ${kitchenKpi("DL", "Exceptions", String(rows.filter(({ flight }) => finalPassengerCount(flight) > flight.capacity).length), "", "red")}
       </section>
       <section class="kitchen-board-table-wrap">
@@ -1411,13 +4071,13 @@ function kitchenBoardScreen() {
 }
 
 function kitchenScheduleRows() {
-  return state.flights
-    .filter((flight) => flight.kot === "confirmed")
+  return operationsForSelectedDate()
+    .filter((flight) => ["Confirmed", "Sent to Kitchen", "In Progress", "Prepared", "Approved", "Dispatched"].includes(flight.kot) || flight.kotSnapshot)
     .slice(0, 8)
     .map((flight) => ({
       flight,
-      calc: calculatedKot(flight),
-      plan: { hotMeal: "13:15", coldMeal: "13:00", dispatch: "14:45" }
+      calc: flight.kotSnapshot?.productionPlanSnapshot || flight.productionPlanSnapshot || calculatedKot(flight),
+      plan: { hotMeal: flight.flightSnapshot?.hotMealDishOutTime || "13:15", coldMeal: flight.flightSnapshot?.coldMealPreparationTime || "13:00", dispatch: flight.flightSnapshot?.dispatchTime || "14:45" }
     }));
 }
 
@@ -1522,7 +4182,19 @@ function filterTickets(value) {
 
 function challanPaper(full = false) {
   const flight = selectedFlight();
-  const calc = calculatedKot(flight);
+  const challan = selectedChallan();
+  const source = challan || {};
+  const flightSnapshot = source.flightSnapshot || flight.flightSnapshot || {};
+  const menuSnapshot = source.menuSnapshot || flight.menuSnapshot || {};
+  const loadingSheetSnapshot = source.loadingSheetSnapshot || flight.loadingSheetSnapshot || {};
+  const passengerSnapshot = source.passengerSnapshot || {};
+  const calc = challan ? {
+    finalPax: passengerSnapshot.finalPax || source.sourceKotSnapshot?.productionPlanSnapshot?.finalPax || 0,
+    totalMeals: source.totalsSnapshot?.totalMeals || 0,
+    specialMeals: source.totalsSnapshot?.specialMeals || 0,
+    ancillaries: source.ancillaryLinesSnapshot || [],
+    deliveredTotal: source.totalsSnapshot?.deliveredTotal || 0
+  } : calculatedKot(flight);
   return `
     <div class="challan-paper">
       <div class="paper-head">
@@ -1531,26 +4203,40 @@ function challanPaper(full = false) {
           <p><b>The Soaltee Hotel Limited</b><br>Tahachal, Kathmandu, Nepal<br>Tel: +977-1-4113671/4/113697<br>VAT No.: 500052786 | PAN No.: 601052900</p>
         </div>
         <div class="paper-title">GATE PASS CUM DELIVERY CHALLAN<br>FOR MEAL ON BOARD</div>
-        <div class="serial">S. No.: <strong>${state.kot.challanNo}</strong><div class="barcode"></div><div>Date: ${state.kot.date}</div></div>
+        <div class="serial">S. No.: <strong>${source.challanNumber || state.kot.challanNo}</strong><div class="barcode"></div><div>Date: ${source.operationDate || state.kot.date}</div></div>
       </div>
       <div class="paper-grid challan-flight-grid">
         <table class="compact-table"><tbody>
-          ${[["Flight No.", flight.flightNo], ["Registration", flight.reg], ["A/C Type", flight.aircraft], ["Capacity", flight.capacity], ["Sector", flight.sector], ["Operation Date", state.kot.date], ["Meal Plan", flight.mealPlan], ["Final Pax", calc.finalPax]].map(infoRow).join("")}
+          ${[
+            ["Flight No.", flightSnapshot.flightNumber || flight.flightNo],
+            ["Airline", flightSnapshot.airline || flight.airline],
+            ["Origin", flightSnapshot.origin || flight.origin],
+            ["Destination", flightSnapshot.destination || flight.destination],
+            ["Registration", flightSnapshot.defaultRegistration || flight.reg],
+            ["A/C Type", flightSnapshot.aircraftType || flight.aircraft],
+            ["Capacity", flightSnapshot.totalPassengerCapacity || flight.capacity],
+            ["Sector", flightSnapshot.sector || flight.sector],
+            ["STD", flightSnapshot.scheduledDeparture || flight.std],
+            ["Operation Date", source.operationDate || state.kot.date],
+            ["Menu", `${menuSnapshot.menuCode || "-"} / ${menuSnapshot.menuName || "-"}`],
+            ["Loading Sheet", `${loadingSheetSnapshot.loadingSheetCode || "-"} / v${loadingSheetSnapshot.version || "-"}`],
+            ["Final Pax", calc.finalPax]
+          ].map(infoRow).join("")}
         </tbody></table>
-        ${loadTableReadOnly()}
+        ${loadTableReadOnly(challan)}
       </div>
       <div class="paper-grid equal challan-meal-grid">
-        ${dynamicMealCalculationTable(flight)}
-        ${specialMealsTable()}
+        ${challan ? mealSnapshotTable(challan.mealLinesSnapshot, challan.specialMealLinesSnapshot, "Stored KOT replacement meal rules", challan.totalsSnapshot?.totalMeals || 0, calc.finalPax) : dynamicMealCalculationTable(flight)}
+        ${challan ? specialMealsSnapshotTable(challan.specialMealLinesSnapshot) : specialMealsTable()}
       </div>
-      <div style="margin-top:12px">${dynamicAncillaryTable(flight)}</div>
+      <div style="margin-top:12px">${challan ? ancillarySnapshotTable(challan.ancillaryLinesSnapshot) : dynamicAncillaryTable(flight)}</div>
       <div class="paper-grid three" style="margin-top:12px">
-        <div class="panel"><h3>Remarks / Instructions</h3><p>${escapeHtml(flight.operationalRemarks).replace(/\n/g, "<br>")}</p></div>
-        ${sidePanel("Key Timings", [["Hot Meal Dish Out", "13:15"], ["Cold Meal Preparation", "13:00"], ["Dispatch Time", "14:45"]])}
-        ${sidePanel("Delivery Totals", [["Meals", calc.totalMeals], ["Special Meals", calc.specialMeals], ["Ancillary Lines", calc.ancillaries.length], ["Total Delivered Qty", calc.deliveredTotal], ["Chalan Status", state.challanLocked ? "Locked" : "Preview"]])}
+        <div class="panel"><h3>Remarks / Instructions</h3><p>${escapeHtml(source.remarks || flight.operationalRemarks).replace(/\n/g, "<br>")}</p></div>
+        ${sidePanel("Key Timings", [["Hot Meal Dish Out", flightSnapshot.hotMealDishOutTime || "13:15"], ["Cold Meal Preparation", flightSnapshot.coldMealPreparationTime || "13:00"], ["Dispatch Time", flightSnapshot.dispatchTime || "14:45"]])}
+        ${sidePanel("Delivery Totals", [["Meals", calc.totalMeals], ["Special Meals", calc.specialMeals], ["Ancillary Lines", calc.ancillaries.length], ["Total Delivered Qty", calc.deliveredTotal], ["Challan Status", badge(source.status || "Preview")]])}
       </div>
       <div class="signature-grid">
-        ${["Security Check<br>Soaltee Gategourmet Ktm.", "Sup. Soaltee Gategourmet Ktm.<br>ID No.", "Airline Rep.<br>ID No.", "Purser / Purserette<br>ID No."].map((title) => `<div class="signature-box"><b>${title}</b><br><br>Name: ............................<br><br>Sign: ............................<br><br>Time: ............................</div>`).join("")}
+        ${["Prepared by", "Checked by", "Delivered by", "Received by"].map((title) => `<div class="signature-box"><b>${title}</b><br><br>Name: ${escapeHtml(source[title.toLowerCase().replace(/ by/g, "By").replace("received", "received")] || "............................")}<br><br>Sign: ............................<br><br>Time: ............................</div>`).join("")}
       </div>
       <div class="copy-footer">1. WHITE COPY: BILLING &nbsp;&nbsp; 2. BLUE COPY: ACCOUNT &nbsp;&nbsp; 3. YELLOW COPY: SECURITY &nbsp;&nbsp; 4. PINK COPY: OPERATIONS &nbsp;&nbsp; 5. GREEN COPY: AIR REP. &nbsp;&nbsp; 6. YELLOW COPY: PURSER<br>*** THANK YOU ***</div>
     </div>
@@ -1561,14 +4247,15 @@ function infoRow([label, value]) {
   return `<tr><td><b>${label}</b></td><td>${value}</td></tr>`;
 }
 
-function loadTableReadOnly() {
+function loadTableReadOnly(challan = null) {
   const flight = selectedFlight();
-  const calc = calculatedKot(flight);
+  const calc = challan ? challan.sourceKotSnapshot?.productionPlanSnapshot || {} : calculatedKot(flight);
+  const passenger = challan?.passengerSnapshot || {};
   const rows = [
-    ["Configured Capacity", flight.j, 0, flight.capacity, flight.tc, flight.cc],
-    ["Confirmed Pax", 0, 0, flight.confirmedPax, 0, 0],
-    ["Additional Pax", 0, 0, flight.additionalPax, 0, 0],
-    ["Final Pax On Board", flight.j, 0, calc.finalPax, flight.tc, flight.cc],
+    ["Configured Capacity", passenger.businessPax ?? flight.j, passenger.premiumEconomyPax ?? 0, flight.capacity, passenger.technicalCrew ?? flight.tc, passenger.cabinCrew ?? flight.cc],
+    ["Confirmed Pax", 0, 0, passenger.confirmedPax ?? flight.confirmedPax, 0, 0],
+    ["Additional Pax", 0, 0, passenger.additionalPax ?? flight.additionalPax, 0, 0],
+    ["Final Pax On Board", passenger.businessPax ?? flight.j, passenger.premiumEconomyPax ?? 0, passenger.finalPax ?? calc.finalPax, passenger.technicalCrew ?? flight.tc, passenger.cabinCrew ?? flight.cc],
     ["Final Meal On Board", 0, 0, calc.totalMeals, 0, 0]
   ];
   return `
@@ -1579,9 +4266,11 @@ function loadTableReadOnly() {
   `;
 }
 
-function invoicePaper(items, subtotal, tax, totalValue) {
+function invoicePaper(items, subtotal, tax, totalValue, invoice = null, challan = null) {
   const flight = selectedFlight();
-  const exchangeRate = 150.35;
+  const flightSnapshot = invoice?.flightSnapshot || challan?.flightSnapshot || flight.flightSnapshot || {};
+  const menuSnapshot = invoice?.menuSnapshot || challan?.menuSnapshot || flight.menuSnapshot || {};
+  const currency = invoice?.currency || items[0]?.currency || menuSnapshot.currency || "USD";
   return `
     <div class="invoice-paper">
       <div class="invoice-header">
@@ -1598,49 +4287,64 @@ function invoicePaper(items, subtotal, tax, totalValue) {
         </div>
       </div>
       <div class="invoice-meta">
-        <div><strong>Name of Airline:</strong> ${flight.airline}</div>
-        <div><strong>Flt. No.:</strong> ${flight.flightNo}</div>
-        <div style="text-align:right"><strong>S. No.:</strong> ${state.invoice.number || "AUTO"}</div>
+        <div><strong>Name of Airline:</strong> ${flightSnapshot.airline || flight.airline}</div>
+        <div><strong>Flt. No.:</strong> ${flightSnapshot.flightNumber || flight.flightNo}</div>
+        <div style="text-align:right"><strong>S. No.:</strong> ${invoice?.invoiceNumber || state.invoice.number || "AUTO"}</div>
       </div>
       <div class="invoice-meta">
-        <div><strong>Flight Details:</strong> ${flight.sector}</div>
-        <div><strong>Date:</strong> ${state.kot.date}</div>
+        <div><strong>Flight Details:</strong> ${flightSnapshot.sector || flight.sector}</div>
+        <div><strong>Date:</strong> ${invoice?.invoiceDate || challan?.operationDate || state.kot.date}</div>
+        <div><strong>Source Challan:</strong> ${invoice?.sourceChallanNumber || challan?.challanNumber || "-"}</div>
+      </div>
+      <div class="invoice-meta">
+        <div><strong>Menu:</strong> ${menuSnapshot.menuCode || "-"} / ${menuSnapshot.menuName || "-"}</div>
+        <div><strong>Passenger Count:</strong> ${challan?.passengerSnapshot?.finalPax || invoice?.sourceKotSnapshot?.productionPlanSnapshot?.finalPax || calculatedKot(flight).finalPax}</div>
+        <div><strong>Status:</strong> ${badge(invoice?.status || state.invoice.status || "Draft")}</div>
       </div>
       <div class="invoice-items">
         <table class="invoice-table">
           <thead>
             <tr>
               <th>S.No.</th>
-              <th>No. of Meals</th>
-              <th>Type of Meals</th>
+              <th>Item Code</th>
+              <th>Description</th>
+              <th>Unit</th>
+              <th class="invoice-num">Qty</th>
               <th class="invoice-num">Rate</th>
+              <th class="invoice-num">Tax %</th>
               <th class="invoice-num">Amount</th>
+              <th class="invoice-num">Tax</th>
+              <th class="invoice-num">Total</th>
             </tr>
           </thead>
           <tbody>
             ${items.map((item, i) => {
-              const amount = item.qty * item.rate;
               return `<tr>
                 <td>${i + 1}</td>
-                <td class="invoice-num">${item.qty}</td>
-                <td>${item.desc}</td>
-                <td class="invoice-num">${item.rate.toFixed(2)}</td>
-                <td class="invoice-num">${amount.toFixed(2)}</td>
+                <td>${escapeHtml(item.itemCode || item.code)}</td>
+                <td>${escapeHtml(item.description || item.desc)}</td>
+                <td>${escapeHtml(item.unit || item.uom)}</td>
+                <td class="invoice-num">${Number(item.quantity ?? item.qty).toLocaleString()}</td>
+                <td class="invoice-num">${Number(item.unitRate ?? item.rate).toFixed(2)}</td>
+                <td class="invoice-num">${Number(item.taxPercentage || 0).toFixed(2)}</td>
+                <td class="invoice-num">${Number(item.lineAmount ?? ((item.quantity ?? item.qty) * (item.unitRate ?? item.rate))).toFixed(2)}</td>
+                <td class="invoice-num">${Number(item.taxAmount || 0).toFixed(2)}</td>
+                <td class="invoice-num">${Number(item.lineTotal ?? 0).toFixed(2)}</td>
               </tr>`;
             }).join("")}
           </tbody>
           <tfoot>
             <tr class="invoice-subtotal">
-              <td colspan="4"><strong>SUB TOTAL</strong></td>
+              <td colspan="9"><strong>SUB TOTAL</strong></td>
               <td class="invoice-num"><strong>${subtotal.toFixed(2)}</strong></td>
             </tr>
             <tr class="invoice-tax">
-              <td colspan="4"><strong>C.A</strong></td>
+              <td colspan="9"><strong>TAX TOTAL</strong></td>
               <td class="invoice-num"><strong>${tax.toFixed(2)}</strong></td>
             </tr>
             <tr class="invoice-total">
-              <td colspan="4"><strong>TOTAL</strong></td>
-              <td class="invoice-num"><strong>$&nbsp;${totalValue.toFixed(2)}</strong></td>
+              <td colspan="9"><strong>TOTAL</strong></td>
+              <td class="invoice-num"><strong>${currency}&nbsp;${totalValue.toFixed(2)}</strong></td>
             </tr>
           </tfoot>
         </table>
@@ -1663,23 +4367,28 @@ function renderChallanFull() {
 
 function renderChallanPreview() {
   const flight = selectedFlight();
+  const challan = selectedChallan();
+  const existingInvoice = challan ? getInvoiceForChallan(challan.challanId) : null;
+  const invoiceReady = isChallanInvoiceReady(challan);
   const body = `
     <section class="content">
       <div class="toolbar">
         <button class="btn" onclick="setScreen('kot')">Back to KOT Entry</button>
         <span style="flex:1"></span>
-        <button class="btn ${state.challanLocked ? "locked" : ""}" onclick="setScreen('kot')">Edit KOT</button>
+        ${challan ? `<button class="btn" onclick="setScreen('challan')">View Challan</button>` : `<button class="btn green" onclick="generateChallan()">Generate Challan</button>`}
+        <button class="btn ${challan && isChallanInvoiceReady(challan) ? "locked" : ""}" onclick="setScreen('kot')" ${challan && isChallanInvoiceReady(challan) ? "disabled" : ""}>Edit KOT</button>
         <button class="btn" onclick="downloadDemoDocument('challan')">Download PDF</button>
-        <button class="btn blue" onclick="setupInvoiceFromChallan()">Set Up Invoice</button>
-        <button class="btn green" onclick="lockChallan()">Print Challan</button>
+        ${challan ? `<button class="btn" onclick="updateChallanStatus('Checked')">Mark Checked</button><button class="btn green" onclick="updateChallanStatus('Approved')">Mark Approved</button><button class="btn blue" onclick="updateChallanStatus('Dispatched')">Mark Dispatched</button><button class="btn navy" onclick="lockChallan()">Lock Challan</button>` : ""}
+        ${invoiceReady ? `<button class="btn green" onclick="${existingInvoice ? "setupInvoiceFromChallan()" : "generateInvoice()"}">${existingInvoice ? "View Invoice" : "Generate Invoice"}</button>` : ""}
+        <button class="btn" onclick="window.print()">Print</button>
       </div>
-      <div class="notice"><span class="check">✓</span><div><b>Preview Generated Successfully</b><br><span class="muted">Please verify all details carefully. ${state.challanLocked ? "This document is locked from editing." : "You can go back and edit KOT if changes are required."}</span></div></div>
+      <div class="notice"><span class="check">${challan ? "✓" : "!"}</span><div><b>${challan ? "Snapshot Preview Loaded" : "No Challan Generated"}</b><br><span class="muted">${challan ? `This preview uses stored transaction snapshot data from ${escapeHtml(challan.challanNumber)}.` : "Confirm the KOT, then generate a Delivery Challan from the frozen KOT snapshot."}</span></div></div>
       <div class="preview-layout">
         ${challanPaper(false)}
         <aside>
-          ${sidePanel("Document Status", [["KOT Status", badge(flight.kot)], ["Meal Status", badge(flight.meal)], ["Ancillary Status", badge("calculated")], ["Last Updated", flight.lastCalculatedAt || "15/06/2026 10:24"], ["Updated By", "operations1"]])}
+          ${sidePanel("Document Status", [["Challan No.", challan?.challanNumber || "-"], ["Challan Status", badge(challan?.status || "Not Generated")], ["KOT Status", badge(flight.kot)], ["Meal Status", badge(flight.meal)], ["Ancillary Status", badge("calculated")], ["Generated At", challan?.generatedAt || "-"], ["Updated By", "operations1"]])}
           <div class="panel"><h2>Validation Checklist</h2>${validationList("document", flight)}</div>
-          <div class="notice">After printing, the document cannot be modified. Please ensure all details are correct.</div>
+          <div class="notice">${challan && invoiceReady ? "Invoice can be generated from this approved, dispatched, or locked challan." : "Approve, dispatch, or lock the challan before invoice generation."}</div>
           <div class="panel"><h2>Print Options</h2>${["Paper Size", "Orientation", "Copies"].map((label, index) => `<label><span class="muted">${label}</span><input class="input" value="${index === 0 ? "A4" : index === 1 ? "Portrait" : "1"}"></label><br>`).join("")}<label><input type="checkbox" checked> Fit to Page</label><br><label><input type="checkbox" checked> Show Barcode</label></div>
         </aside>
       </div>
@@ -1688,32 +4397,33 @@ function renderChallanPreview() {
 }
 
 function renderInvoice() {
-  const flight = selectedFlight();
-  if (!state.invoice.sourceChallanNo && (flight.production === "approved" || flight.production === "dispatched")) {
-    setupInvoiceFromChallan(false);
-  }
-  const items = invoiceItems();
-  const subtotal = items.reduce((sum, item) => sum + item.qty * item.rate, 0);
-  const tax = subtotal * 0.1;
-  const totalValue = subtotal + tax;
-  const calc = calculatedKot(flight);
-  const sourceReady = state.invoice.sourceChallanNo === state.kot.challanNo;
+  const challan = selectedChallan();
+  if (challan && isChallanInvoiceReady(challan) && !state.invoice.sourceChallanNo) setupInvoiceFromChallan(false);
+  const invoice = selectedInvoice();
+  const items = invoice ? [...invoice.mealInvoiceLinesSnapshot, ...invoice.ancillaryInvoiceLinesSnapshot] : challan ? [...buildMealInvoiceLines(challan), ...buildAncillaryInvoiceLines(challan)] : [];
+  const totals = invoice || calculateInvoiceTotals(items);
+  const existingInvoice = challan ? getInvoiceForChallan(challan.challanId) : null;
   const body = `
     <section class="content">
       <div class="toolbar">
-        <button class="btn" onclick="setScreen('challan-preview')">Back to Chalan</button>
+        <button class="btn" onclick="setScreen('challan-preview')">Back to Challan</button>
         <span style="flex:1"></span>
-        <button class="btn blue" onclick="setupInvoiceFromChallan()">Refresh from Chalan</button>
+        <button class="btn blue" onclick="setupInvoiceFromChallan()">Load from Challan</button>
         <button class="btn" onclick="showToast('Invoice draft saved locally.')">Save Draft</button>
         <button class="btn" onclick="window.print()">Print Invoice</button>
-        <button class="btn green" onclick="generateInvoice()">Generate Invoice</button>
+        <button class="btn green" onclick="generateInvoice()">${existingInvoice ? "View Invoice" : "Generate Invoice"}</button>
       </div>
-      ${invoicePaper(items, subtotal, tax, totalValue)}
+      ${!challan ? `<div class="notice"><span class="check">!</span><div><b>No approved challan selected</b><br><span class="muted">Generate and approve a Delivery Challan before invoicing.</span></div></div>` : ""}
+      ${invoicePaper(items, Number(totals.subtotal || 0), Number(totals.taxTotal || 0), Number(totals.grandTotal || 0), invoice, challan)}
     </section>`;
   return layout("Invoice Generation", "Create Invoice from Delivery Challan", body, "finance");
 }
 
 function invoiceItems() {
+  const invoice = selectedInvoice();
+  if (invoice) return [...invoice.mealInvoiceLinesSnapshot, ...invoice.ancillaryInvoiceLinesSnapshot];
+  const challan = selectedChallan();
+  if (challan) return [...buildMealInvoiceLines(challan), ...buildAncillaryInvoiceLines(challan)];
   const flight = selectedFlight();
   const calc = calculatedKot(flight);
   const mealItems = calc.meals.map((meal) => [meal.rateCode, meal.name, "Pax", meal.qty, Number(meal.rate || 0)]);
@@ -1741,7 +4451,7 @@ function renderLoadingMaintenance() {
   const chart = state.loadingChart;
   const body = `
     <section class="content">
-      <div class="toolbar"><button class="btn" onclick="setScreen('queue')">Back to Meal Loading Chart List</button><span style="flex:1"></span><button class="btn" onclick="setScreen('loading-preview')">Preview Loading Matrix</button><button class="btn" onclick="window.print()">Print Loading Chart</button><button class="btn green" onclick="saveState();showToast('Meal loading chart saved locally.')">Save</button><button class="btn" onclick="setScreen('queue')">Cancel</button></div>
+      <div class="toolbar"><button class="btn" onclick="setScreen('loading-sheet-master')">Back to Loading Sheet Master</button><span style="flex:1"></span><button class="btn" onclick="setScreen('loading-preview')">Preview Loading Matrix</button><button class="btn" onclick="window.print()">Print Loading Chart</button><button class="btn green" onclick="saveLoadingSheetFromChart()">Save</button><button class="btn" onclick="setScreen('loading-sheet-master')">Cancel</button></div>
       <div class="panel"><h2>Chart Header</h2><div class="chart-header">
         ${formField("Airline *", chart.airline, "state.loadingChart.airline=this.value;saveState()")}
         ${formField("Aircraft Type", chart.aircraftType, "state.loadingChart.aircraftType=this.value;saveState()")}
@@ -1800,8 +4510,14 @@ function renderLoadingPreview() {
   return layout("Meal Loading Chart Preview", "Preview calculated quantities per pax", body);
 }
 
-function openFlightModal(flightNo = state.selectedFlight) {
-  state.selectedFlight = flightNo;
+function openFlightModal(flightNo = state.selectedOperationId || state.selectedFlight) {
+  const operation = getDailyOperationById(flightNo) || operationsForSelectedDate().find((item) => item.flightNo === flightNo);
+  if (operation) {
+    state.selectedOperationId = operation.id;
+    state.selectedFlight = operation.flightNo || operation.flightSnapshot?.flightNumber || "";
+  } else {
+    state.selectedFlight = flightNo;
+  }
   saveState();
   const flight = selectedFlight();
   const calc = calculatedKot(flight);
@@ -1813,7 +4529,7 @@ function openFlightModal(flightNo = state.selectedFlight) {
         <div class="modal-head"><h2 style="margin:0">Flight Operational Review</h2><button class="btn icon-btn" onclick="closeModal()">×</button></div>
         <div class="modal-body">
           <div class="chart-header">
-            ${[["Flight Number", flight.flightNo], ["Airline", flight.airline], ["Sector", flight.sector], ["Aircraft", flight.aircraft], ["Registration", flight.reg], ["STD", flight.std], ["Capacity", flight.capacity], ["Final Pax", calc.finalPax], ["Meal Counts", calc.totalMeals], ["Menu Plan", flight.mealPlan], ["Dispatch Timing", "14:45"], ["Approval Status", badge(flight.production)], ["KOT Status", badge(flight.kot)]].map(([label, value]) => `<div class="mini-card"><span class="muted">${label}</span><br><b>${value}</b></div>`).join("")}
+            ${[["Flight Number", flight.flightNo], ["Airline", flight.airline], ["Sector", flight.sector], ["Aircraft", flight.aircraft], ["Registration", flight.reg], ["STD", flight.std], ["Capacity", flight.capacity], ["Final Pax", calc.finalPax], ["Meal Counts", calc.totalMeals], ["Menu Plan", flight.mealPlan], ["Loading Sheet", flight.loadingSheetSnapshot?.loadingSheetCode || "-"], ["Configuration", badge(flight.configurationStatus || "Ready")], ["KOT Status", badge(flight.kot)]].map(([label, value]) => `<div class="mini-card"><span class="muted">${label}</span><br><b>${value}</b></div>`).join("")}
           </div>
         </div>
         <div class="modal-foot"><span class="muted">Stored locally in browser demo data.</span><button class="btn green" onclick="setScreen('kitchen');closeModal()">Open Kitchen Display</button></div>

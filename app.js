@@ -1107,6 +1107,7 @@ function saveState() {
 
 function setScreen(screen) {
   state.screen = screen;
+  if (screen === "menu-master") state.menuMasterView = "list";
   saveState();
   render();
 }
@@ -1772,6 +1773,103 @@ function updateLoadingRow(index, key, value) {
   render();
 }
 
+function addLoadingRow() {
+  const loadingSheet = getLoadingSheetById(state.selectedLoadingSheetId);
+  const menu = getMenuById(loadingSheet?.menuId) || getMenuById(state.selectedMenuId);
+  if (!loadingSheet || !menu) {
+    showToast("Select a menu loading sheet before adding rows.");
+    return;
+  }
+  const sequence = Math.max(state.loadingChart.rows.length, menu.lines.length, loadingSheet.lines.length) + 1;
+  const itemCode = nextMenuItemCode(menu, sequence);
+  const menuLine = makeMenuLine(itemCode, "New Menu Item", "Other", loadingSheet.mealType || state.loadingChart.mealType, "Other", "Pcs", 0, sequence);
+  menu.lines.push(menuLine);
+  const chartRow = { code: itemCode, name: menuLine.itemName, unit: menuLine.unit, ratioType: "1 : 1 (Per Pax)", ratioValue: "1:1", remarks: "Per Pax" };
+  state.loadingChart.rows.push(chartRow);
+  loadingSheet.lines.push({
+    id: generateId("lsln", `${loadingSheet.id}-${sequence}`),
+    menuLineId: menuLine.id,
+    menuItemCode: itemCode,
+    menuItemName: menuLine.itemName,
+    category: menuLine.category,
+    unit: menuLine.unit,
+    cabinClass: "All",
+    ratioType: "one_to_one",
+    ratioValue: "1:1",
+    fixedQuantity: 0,
+    quantityPerPassenger: 1,
+    minimumQuantity: 0,
+    maximumQuantity: "",
+    bufferPercentage: 0,
+    roundingMethod: "ceil",
+    displaySequence: sequence,
+    remarks: "Per Pax"
+  });
+  logAudit("Master edited", "Menu Master", menu.id, `Added loading row ${itemCode}`);
+  saveState();
+  render();
+}
+
+function deleteLastLoadingRow() {
+  deleteLoadingRow(state.loadingChart.rows.length - 1);
+}
+
+function deleteLoadingRow(index) {
+  const loadingSheet = getLoadingSheetById(state.selectedLoadingSheetId);
+  const menu = getMenuById(loadingSheet?.menuId) || getMenuById(state.selectedMenuId);
+  if (!loadingSheet || !menu || index < 0) return;
+  if (state.loadingChart.rows.length <= 1) {
+    showToast("At least one loading row is required.");
+    return;
+  }
+  const removedChartRow = state.loadingChart.rows.splice(index, 1)[0];
+  const removedLoadingLine = loadingSheet.lines.splice(index, 1)[0];
+  const removeCode = removedLoadingLine?.menuItemCode || removedChartRow?.code;
+  menu.lines = menu.lines.filter((line) => line.id !== removedLoadingLine?.menuLineId && line.itemCode !== removeCode);
+  logAudit("Master edited", "Menu Master", menu.id, `Deleted loading row ${removeCode || index + 1}`);
+  saveState();
+  render();
+}
+
+function importLoadingRowsFromMenu() {
+  const loadingSheet = getLoadingSheetById(state.selectedLoadingSheetId);
+  const menu = getMenuById(loadingSheet?.menuId) || getMenuById(state.selectedMenuId);
+  if (!loadingSheet || !menu) return;
+  loadingSheet.lines = (menu.lines || []).map((line, index) => ({
+    id: generateId("lsln", `${loadingSheet.id}-${line.id}-${index}`),
+    menuLineId: line.id,
+    menuItemCode: line.itemCode,
+    menuItemName: line.itemName,
+    category: line.category,
+    unit: line.unit,
+    cabinClass: "All",
+    ratioType: "one_to_one",
+    ratioValue: "1:1",
+    fixedQuantity: 0,
+    quantityPerPassenger: 1,
+    minimumQuantity: 0,
+    maximumQuantity: "",
+    bufferPercentage: 0,
+    roundingMethod: "ceil",
+    displaySequence: index + 1,
+    remarks: line.category || "Per Pax"
+  }));
+  syncLegacyLoadingChart();
+  saveState();
+  render();
+}
+
+function nextMenuItemCode(menu, sequence) {
+  let counter = sequence;
+  let code = `ITEM-${String(counter).padStart(3, "0")}`;
+  const existing = new Set((menu.lines || []).map((line) => line.itemCode));
+  while (existing.has(code)) {
+    counter += 1;
+    code = `ITEM-${String(counter).padStart(3, "0")}`;
+  }
+  return code;
+}
+
 function syncKotSnapshot(flight = selectedFlight()) {
   if (flight?.flightSnapshot) {
     const calc = calculateOperationalPlan(flight);
@@ -2318,7 +2416,65 @@ function renderFlightMaster() {
 }
 
 function renderMenuMaster() {
-  return renderMasterScreen(masterConfigs().menus);
+  const config = masterConfigs().menus;
+  if (state.menuMasterView !== "detail") return renderMasterScreen(config);
+
+  const menus = masterRows(config);
+  const selectedMenu = getMenuById(state.selectedMenuId) || menus[0] || emptyMenuMaster();
+  state.selectedMenuId = selectedMenu.id;
+  const loadingSheet = findLoadingSheetForMenu(selectedMenu);
+  const flight = findFlightForMenu(selectedMenu, loadingSheet);
+  const mapping = state.masters.flightMenuMappings.find((item) => item.menuId === selectedMenu.id && item.flightMasterId === flight?.id);
+  const body = `
+    <section class="content menu-master-content">
+      <div class="toolbar master-toolbar menu-master-toolbar">
+        <button class="btn" onclick="showMenuMasterTable()">Back to Table</button>
+        <select class="field menu-master-select" onchange="state.selectedMenuId=this.value;saveState();render()">
+          ${menus.map((menu) => `<option value="${escapeHtml(menu.id)}" ${menu.id === selectedMenu.id ? "selected" : ""}>${escapeHtml(menu.menuCode)} - ${escapeHtml(menu.menuName)}</option>`).join("")}
+        </select>
+        <span class="badge ${selectedMenu.status.toLowerCase()}">${escapeHtml(selectedMenu.status)}</span>
+        <span style="flex:1"></span>
+        <button class="btn green" onclick="openMasterModal('menus')">Add Menu</button>
+        <button class="btn" onclick="openMasterModal('menus','${selectedMenu.id}','view')">Record Details</button>
+        <button class="btn green" onclick="openMenuMasterLoadingEdit('${selectedMenu.id}')">Edit Menu</button>
+        <button class="btn" onclick="cloneMasterRecord('menus','${selectedMenu.id}')">Clone Menu</button>
+        <button class="btn" onclick="window.print()">Print</button>
+      </div>
+      ${menuMasterReferenceDocument(selectedMenu, loadingSheet, flight, mapping)}
+      <div class="footer-note">Menu Master preview is linked to Flight Master, Flight-Menu Mapping, and Loading Sheet Master so operations see the same menu, effective period, ratios, and calculated quantity matrix.</div>
+    </section>
+  `;
+  return layout("Menu Master", "Meal loading chart style menu master view", body);
+}
+
+function openMenuMasterChart(id) {
+  state.screen = "menu-master";
+  state.selectedMenuId = id;
+  state.menuMasterView = "detail";
+  saveState();
+  render();
+}
+
+function showMenuMasterTable() {
+  state.menuMasterView = "list";
+  saveState();
+  render();
+}
+
+function openMenuMasterLoadingEdit(id) {
+  const menu = getMenuById(id);
+  if (!menu) {
+    showToast("Select a menu before editing.");
+    return;
+  }
+  let loadingSheet = findLoadingSheetForMenu(menu);
+  if (!loadingSheet) {
+    loadingSheet = createLoadingSheetForMenu(menu);
+    state.masters.loadingSheets.push(loadingSheet);
+    logAudit("Master created", "Loading Sheet Master", loadingSheet.id, `Created from Menu Master ${menu.menuCode}`);
+  }
+  state.selectedMenuId = menu.id;
+  openLoadingMaintenance(loadingSheet.id, "menu-master");
 }
 
 function renderMappingMaster() {
@@ -2331,6 +2487,226 @@ function renderAncillaryMaster() {
 
 function renderLoadingSheetMaster() {
   return renderMasterScreen(masterConfigs().loadingSheets);
+}
+
+function findLoadingSheetForMenu(menu) {
+  if (!menu) return null;
+  const selected = getLoadingSheetById(state.selectedLoadingSheetId);
+  if (selected?.menuId === menu.id) return selected;
+  return state.masters.loadingSheets.find((sheet) => sheet.menuId === menu.id && sheet.status === "Active")
+    || state.masters.loadingSheets.find((sheet) => sheet.menuId === menu.id)
+    || null;
+}
+
+function findFlightForMenu(menu, loadingSheet) {
+  const fromSheet = loadingSheet ? getFlightMasterById(loadingSheet.flightMasterId) : null;
+  if (fromSheet) return fromSheet;
+  const mapping = state.masters.flightMenuMappings.find((item) => item.menuId === menu?.id && item.status === "Active")
+    || state.masters.flightMenuMappings.find((item) => item.menuId === menu?.id);
+  return mapping ? getFlightMasterById(mapping.flightMasterId) : state.masters.flights[0];
+}
+
+function createLoadingSheetForMenu(menu) {
+  const mapping = state.masters.flightMenuMappings.find((item) => item.menuId === menu.id && item.status === "Active")
+    || state.masters.flightMenuMappings.find((item) => item.menuId === menu.id);
+  const flight = mapping ? getFlightMasterById(mapping.flightMasterId) : state.masters.flights[0];
+  return normalizeLoadingSheetRecord({
+    id: generateId("load", menu.id),
+    loadingSheetCode: `MLC-${menu.menuCode || "MENU"}-${menu.version || "1"}`,
+    version: menu.version || "1",
+    flightMasterId: flight?.id || "",
+    aircraftType: flight?.aircraftType || "",
+    menuId: menu.id,
+    serviceSequence: menu.serviceSequence || mapping?.serviceSequence || "1",
+    mealType: menu.serviceType || mapping?.serviceType || "Hot Breakfast",
+    daysOfOperation: flight?.operatingDays || [],
+    effectiveFrom: menu.effectiveFrom || "2026-06-15",
+    effectiveTo: menu.effectiveTo || "2026-12-31",
+    rotation: "",
+    notes: menu.description || "",
+    status: menu.status || "Active",
+    lines: (menu.lines || []).map((line, index) => ({
+      id: generateId("lsln", `${menu.id}-${index}`),
+      menuLineId: line.id,
+      menuItemCode: line.itemCode,
+      menuItemName: line.itemName,
+      category: line.category,
+      unit: line.unit,
+      cabinClass: "All",
+      ratioType: "one_to_one",
+      ratioValue: "1:1",
+      fixedQuantity: 0,
+      quantityPerPassenger: 1,
+      minimumQuantity: 0,
+      maximumQuantity: "",
+      bufferPercentage: 0,
+      roundingMethod: "ceil",
+      displaySequence: index + 1,
+      remarks: line.category || ""
+    }))
+  });
+}
+
+function menuMasterReferenceDocument(menu, loadingSheet, flight, mapping) {
+  const rows = menuMasterReferenceRows(menu, loadingSheet);
+  const points = Array.from({ length: 20 }, (_, index) => index + 1);
+  const effectiveFrom = loadingSheet?.effectiveFrom || mapping?.effectiveFrom || menu.effectiveFrom;
+  const effectiveTo = loadingSheet?.effectiveTo || mapping?.effectiveTo || menu.effectiveTo;
+  const rotation = parseRotationRange(loadingSheet?.rotation);
+  const mealCode = loadingSheet?.loadingSheetCode || menu.menuCode;
+  const serviceSeq = loadingSheet?.serviceSequence || mapping?.serviceSequence || menu.serviceSequence || "1";
+  const mealType = loadingSheet?.mealType || mapping?.serviceType || menu.serviceType;
+  const sector = compactSector(flight?.sector || menu.menuName);
+  const dayOps = dayOpsDigits(flight?.operatingDays);
+  const aircraftType = loadingSheet?.aircraftType || flight?.aircraftType || "-";
+  const classLabel = cabinClassShort(menu.cabinClasses?.[0]);
+  return `
+    <div class="menu-document-scroll">
+      <article class="menu-master-paper">
+        <div class="menu-doc-top">
+          <div>
+            <h2>Meal Loading Chart</h2>
+            <p><b>CUP Name :</b> ${escapeHtml(`GATE-KTM-${effectivePeriodCode(effectiveFrom)}-23810`)}</p>
+            <p><b>Caterer (Station) :</b> GATE (KTM)</p>
+            <p><b>Effective Period :</b> ${escapeHtml(effectivePeriodLabel(effectiveFrom))}</p>
+          </div>
+          <div class="menu-doc-airline">${escapeHtml((flight?.airline || "flydubai").toLowerCase())}</div>
+        </div>
+
+        <div class="menu-section-title">Section 1: Service Details - Meal</div>
+        <table class="menu-detail-table">
+          <tbody>
+            <tr>
+              <th>Leg</th><th>Sector</th><th>STD</th><th>STA</th><th>Flight Time</th><th>Day of Ops</th><th>Aircraft Type</th><th>Flight Effective Period</th>
+            </tr>
+            <tr>
+              <td>1</td><td>${escapeHtml(sector)}</td><td>${escapeHtml(flight?.scheduledDeparture || "-")}</td><td>${escapeHtml(flight?.scheduledArrival || "-")}</td><td>${escapeHtml(flightTime(flight))}</td><td>${escapeHtml(dayOps)}</td><td>${escapeHtml(aircraftType)}</td><td>${escapeHtml(`${formatDocDate(effectiveFrom)} - ${formatDocDate(effectiveTo)}`)}</td>
+            </tr>
+            <tr>
+              <th>Leg</th><th>Class</th><th>Service Seq</th><th>Meal Type</th><th>Rotation</th><th>Meal Code</th><th colspan="2">Rotation Effective Period</th>
+            </tr>
+            <tr>
+              <td>1</td><td>${escapeHtml(classLabel)}</td><td>${escapeHtml(serviceSeq)}</td><td>${escapeHtml(mealType)}</td><td>${escapeHtml(rotation.label || "4")}</td><td>${escapeHtml(mealCode)}</td><td colspan="2">${escapeHtml(rotation.period || `${formatDocDate(effectiveFrom)}-${formatDocDate(effectiveTo)}`)}</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <table class="menu-summary-table">
+          <tbody>
+            <tr><th>Class</th><th>Meal Code</th><th>Meal Name</th><th>Meal Type</th><th>Version</th><th>Effective Date</th></tr>
+            <tr><td>${escapeHtml(classLabel)}</td><td>${escapeHtml(mealCode)}</td><td>${escapeHtml(menu.menuName)}</td><td>${escapeHtml(mealType)}</td><td>${escapeHtml(menu.version || loadingSheet?.version || "-")}</td><td>${escapeHtml(formatDocDate(menu.effectiveFrom || effectiveFrom))}</td></tr>
+          </tbody>
+        </table>
+
+        <div class="menu-matrix-wrap">
+          <table class="menu-reference-matrix">
+            <thead>
+              <tr><th>Class</th><th>Dish Code</th><th>Dish Name</th><th>Ratio</th>${points.map((point) => `<th class="num">${point}</th>`).join("")}</tr>
+            </thead>
+            <tbody>
+              ${rows.map((row, index) => `
+                <tr>
+                  <td>${index === 0 ? escapeHtml(classLabel) : ""}</td>
+                  <td><span>${escapeHtml(row.group)}</span><b>${escapeHtml(row.code)}</b></td>
+                  <td>${escapeHtml(row.name)}</td>
+                  <td>${escapeHtml(row.ratio)}</td>
+                  ${points.map((point) => `<td class="num">${menuReferenceQty(row, point)}</td>`).join("")}
+                </tr>
+              `).join("") || `<tr><td colspan="${points.length + 4}" class="empty-state">No menu lines configured.</td></tr>`}
+            </tbody>
+          </table>
+        </div>
+      </article>
+    </div>
+  `;
+}
+
+function menuMasterReferenceRows(menu, loadingSheet) {
+  return [...(menu?.lines || [])]
+    .sort((a, b) => Number(a.displaySequence || 0) - Number(b.displaySequence || 0))
+    .map((line, index) => {
+      const loadingLine = loadingSheet?.lines?.find((item) => item.menuLineId === line.id || item.menuItemCode === line.itemCode) || {};
+      return {
+        code: line.itemCode || loadingLine.menuItemCode || `ITEM-${index + 1}`,
+        name: line.itemName || loadingLine.menuItemName || "",
+        group: String(line.category || loadingLine.category || "Meal").toUpperCase(),
+        ratio: menuReferenceRatioLabel(loadingLine),
+        ratioType: loadingLine.ratioType || "one_to_one",
+        ratioValue: loadingLine.ratioValue || "1:1"
+      };
+    });
+}
+
+function menuReferenceRatioLabel(line = {}) {
+  if (!line.ratioValue && !line.ratioType) return "1:1 - N";
+  if (line.ratioValue === "1:1" || line.ratioType === "one_to_one") return "1:1 - N";
+  return line.ratioValue || line.ratioType || "1:1 - N";
+}
+
+function menuReferenceQty(row, pax) {
+  if (/^JHM?50$/i.test(row.ratio)) return Math.max(1, Math.ceil(pax * .5));
+  if (/^JHM?30$/i.test(row.ratio)) return Math.max(1, Math.ceil(pax * .3));
+  if (/^JHM?60$/i.test(row.ratio)) return Math.max(1, Math.ceil(pax * .6));
+  if (row.ratio === "JH150") return Math.max(1, Math.ceil(pax / 25));
+  if (row.ratioType === "fixed") return Number(row.ratioValue || 0);
+  return pax;
+}
+
+function parseRotationRange(rotation = "") {
+  const text = String(rotation || "").trim();
+  if (!text) return { label: "", period: "" };
+  const match = text.match(/^(.+?)\s+-\s+(.+)$/);
+  if (match) return { label: "4", period: `${match[1].trim()}-${match[2].trim()}` };
+  return { label: "4", period: text };
+}
+
+function compactSector(value = "") {
+  return String(value || "").replace(/\s+-\s+/g, "-") || "-";
+}
+
+function cabinClassShort(value = "") {
+  const text = String(value || "").toLowerCase();
+  if (text.includes("business")) return "J";
+  if (text.includes("premium")) return "W";
+  if (text.includes("economy")) return "Y";
+  if (text.includes("crew")) return "C";
+  return "J";
+}
+
+function dayOpsDigits(days = []) {
+  const map = { Mon: "1", Tue: "2", Wed: "3", Thu: "4", Fri: "5", Sat: "6", Sun: "7" };
+  const digits = (days || []).map((day) => map[day]).filter(Boolean).join("");
+  return digits || "1234567";
+}
+
+function effectivePeriodLabel(value) {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString("en-US", { month: "short", year: "2-digit" }).replace(" ", "-");
+}
+
+function effectivePeriodCode(value) {
+  return effectivePeriodLabel(value).toUpperCase();
+}
+
+function formatDocDate(value) {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  const day = String(date.getDate()).padStart(2, "0");
+  const month = date.toLocaleString("en-US", { month: "short" });
+  return `${day}-${month}-${date.getFullYear()}`;
+}
+
+function flightTime(flight) {
+  if (!flight?.scheduledDeparture || !flight?.scheduledArrival) return state.loadingChart.mealTime || "-";
+  const [fromH, fromM] = String(flight.scheduledDeparture).split(":").map(Number);
+  const [toH, toM] = String(flight.scheduledArrival).split(":").map(Number);
+  if ([fromH, fromM, toH, toM].some((value) => Number.isNaN(value))) return state.loadingChart.mealTime || "-";
+  let minutes = (toH * 60 + toM) - (fromH * 60 + fromM);
+  if (minutes < 0) minutes += 24 * 60;
+  return `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
 }
 
 function renderAuditTrail() {
@@ -2541,13 +2917,15 @@ function masterRows(config) {
 }
 
 function masterTableRow(config, row) {
+  const viewHandler = config.key === "menus" ? `openMenuMasterChart('${row.id}')` : `openMasterModal('${config.key}','${row.id}','view')`;
+  const editHandler = config.key === "menus" ? `openMenuMasterLoadingEdit('${row.id}')` : `openMasterModal('${config.key}','${row.id}','edit')`;
   return `
     <tr>
       ${config.columns.map(([label, getter, className]) => `<td class="${className || ""}">${getter(row)}</td>`).join("")}
       <td>
         <div class="row-actions">
-          <button class="btn" onclick="openMasterModal('${config.key}','${row.id}','view')">View</button>
-          <button class="btn green" onclick="openMasterModal('${config.key}','${row.id}','edit')">Edit</button>
+          <button class="btn" onclick="${viewHandler}">View</button>
+          <button class="btn green" onclick="${editHandler}">Edit</button>
           ${config.key === "menus" ? `<button class="btn" onclick="cloneMasterRecord('${config.key}','${row.id}')">Clone Menu</button>` : ""}
           ${config.extraActions ? config.extraActions(row) : ""}
           <button class="btn" onclick="toggleMasterStatus('${config.key}','${row.id}')">${row.status === "Active" ? "Deactivate" : "Activate"}</button>
@@ -2737,8 +3115,9 @@ function previewLoadingSheet(id) {
   setScreen("loading-preview");
 }
 
-function openLoadingMaintenance(id) {
+function openLoadingMaintenance(id, returnScreen = "loading-sheet-master") {
   state.selectedLoadingSheetId = id;
+  state.loadingMaintenanceReturn = returnScreen;
   syncLegacyLoadingChart();
   saveState();
   setScreen("loading-maintenance");
@@ -2751,7 +3130,7 @@ function saveLoadingSheetFromChart() {
     return;
   }
   const flight = state.masters.flights.find((item) => item.flightNumber === state.loadingChart.flightNo && item.airline === state.loadingChart.airline);
-  const menu = state.masters.menus.find((item) => item.serviceType === state.loadingChart.mealType) || getMenuById(loadingSheet.menuId);
+  const menu = getMenuById(loadingSheet.menuId) || state.masters.menus.find((item) => item.serviceType === state.loadingChart.mealType);
   loadingSheet.loadingSheetCode = state.loadingChart.chartCode;
   loadingSheet.version = state.loadingChart.version;
   loadingSheet.flightMasterId = flight?.id || loadingSheet.flightMasterId;
@@ -4449,9 +4828,11 @@ function invoiceTable(items) {
 
 function renderLoadingMaintenance() {
   const chart = state.loadingChart;
+  const returnScreen = state.loadingMaintenanceReturn === "menu-master" ? "menu-master" : "loading-sheet-master";
+  const returnLabel = returnScreen === "menu-master" ? "Back to Menu Master" : "Back to Loading Sheet Master";
   const body = `
     <section class="content">
-      <div class="toolbar"><button class="btn" onclick="setScreen('loading-sheet-master')">Back to Loading Sheet Master</button><span style="flex:1"></span><button class="btn" onclick="setScreen('loading-preview')">Preview Loading Matrix</button><button class="btn" onclick="window.print()">Print Loading Chart</button><button class="btn green" onclick="saveLoadingSheetFromChart()">Save</button><button class="btn" onclick="setScreen('loading-sheet-master')">Cancel</button></div>
+      <div class="toolbar"><button class="btn" onclick="setScreen('${returnScreen}')">${returnLabel}</button><span style="flex:1"></span><button class="btn" onclick="setScreen('loading-preview')">Preview Loading Matrix</button><button class="btn" onclick="window.print()">Print Loading Chart</button><button class="btn green" onclick="saveLoadingSheetFromChart()">Save</button><button class="btn" onclick="setScreen('${returnScreen}')">Cancel</button></div>
       <div class="panel"><h2>Chart Header</h2><div class="chart-header">
         ${formField("Airline *", chart.airline, "state.loadingChart.airline=this.value;saveState()")}
         ${formField("Aircraft Type", chart.aircraftType, "state.loadingChart.aircraftType=this.value;saveState()")}
@@ -4468,7 +4849,7 @@ function renderLoadingMaintenance() {
         ${formField("Rotation Effective To", chart.rotationTo, "state.loadingChart.rotationTo=this.value;saveState()")}
         <label><span class="muted">Notes</span><textarea onchange="state.loadingChart.notes=this.value;saveState()">${escapeHtml(chart.notes)}</textarea></label>
       </div></div>
-      <div class="panel"><div style="display:flex;justify-content:space-between;align-items:center"><h2>Meal Loading Ratio Details</h2><div><button class="btn">Add Row</button> <button class="btn danger">Delete Row</button> <button class="btn">Import from Template</button></div></div>${ratioTable()}</div>
+      <div class="panel"><div style="display:flex;justify-content:space-between;align-items:center"><h2>Meal Loading Ratio Details</h2><div><button class="btn" onclick="addLoadingRow()">Add Row</button> <button class="btn danger" onclick="deleteLastLoadingRow()">Delete Row</button> <button class="btn" onclick="importLoadingRowsFromMenu()">Import from Template</button></div></div>${ratioTable()}</div>
       <div class="paper-grid">
         <div class="panel"><h2>Ratio Type Guide</h2><p><b>1 : 1 (Per Pax)</b> = Item quantity increases one by one with each passenger.</p><p><b>J (Business)</b> = Quantity based on Business Class ratio.</p><p><b>W / Y</b> = Quantity based on cabin class ratio.</p></div>
         ${sidePanel("Summary", [["Total Items", chart.rows.length], ["Service", "1"], ["Meal Time", chart.mealType], ["Aircraft Capacity", chartTotalPax()], ["Chart Status", badge("confirmed")]])}
@@ -4483,7 +4864,7 @@ function loadingRows() {
 
 function ratioTable() {
   const ratioTypes = ["1 : 1 (Per Pax)", "J (Business)", "W (Premium Economy)", "Y (Economy)", "Crew"];
-  return `<div class="table-wrap"><table><thead><tr><th>Seq. No.</th><th>Service Seq.</th><th>Service Type</th><th>Dish Code</th><th>Dish Name</th><th>Unit</th><th>Ratio Type</th><th>Ratio Value</th><th>Min Pax</th><th>Max Pax</th><th>Remarks</th><th>Actions</th></tr></thead><tbody>${loadingRows().map((row, i) => `<tr><td>${i + 1}</td><td>1</td><td>${state.loadingChart.mealType}</td><td><input class="input cell-input" value="${escapeHtml(row.code)}" onchange="updateLoadingRow(${i}, 'code', this.value)"></td><td><input class="input cell-input dish-input" value="${escapeHtml(row.name)}" onchange="updateLoadingRow(${i}, 'name', this.value)"></td><td><input class="input cell-input" value="${escapeHtml(row.unit)}" onchange="updateLoadingRow(${i}, 'unit', this.value)"></td><td><select class="select cell-input" onchange="updateLoadingRow(${i}, 'ratioType', this.value)">${ratioTypes.map((type) => `<option ${type === row.ratioType ? "selected" : ""}>${type}</option>`).join("")}</select></td><td><input class="input cell-input" value="${escapeHtml(row.ratioValue)}" onchange="updateLoadingRow(${i}, 'ratioValue', this.value)"></td><td>1</td><td>9999</td><td>${escapeHtml(row.remarks)}</td><td><button class="btn icon-btn" title="Edit row">ED</button></td></tr>`).join("")}</tbody></table></div>`;
+  return `<div class="table-wrap"><table><thead><tr><th>Seq. No.</th><th>Service Seq.</th><th>Service Type</th><th>Dish Code</th><th>Dish Name</th><th>Unit</th><th>Ratio Type</th><th>Ratio Value</th><th>Min Pax</th><th>Max Pax</th><th>Remarks</th><th>Actions</th></tr></thead><tbody>${loadingRows().map((row, i) => `<tr><td>${i + 1}</td><td>1</td><td>${state.loadingChart.mealType}</td><td><input class="input cell-input" value="${escapeHtml(row.code)}" onchange="updateLoadingRow(${i}, 'code', this.value)"></td><td><input class="input cell-input dish-input" value="${escapeHtml(row.name)}" onchange="updateLoadingRow(${i}, 'name', this.value)"></td><td><input class="input cell-input" value="${escapeHtml(row.unit)}" onchange="updateLoadingRow(${i}, 'unit', this.value)"></td><td><select class="select cell-input" onchange="updateLoadingRow(${i}, 'ratioType', this.value)">${ratioTypes.map((type) => `<option ${type === row.ratioType ? "selected" : ""}>${type}</option>`).join("")}</select></td><td><input class="input cell-input" value="${escapeHtml(row.ratioValue)}" onchange="updateLoadingRow(${i}, 'ratioValue', this.value)"></td><td>1</td><td>9999</td><td>${escapeHtml(row.remarks)}</td><td><button class="btn icon-btn" onclick="deleteLoadingRow(${i})" title="Delete row">DL</button></td></tr>`).join("")}</tbody></table></div>`;
 }
 
 function renderLoadingPreview() {

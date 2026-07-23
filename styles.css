@@ -1361,6 +1361,189 @@ label .muted {
   margin-top: 0;
 }
 
+.menu-master-content {
+  background: #eef2f6;
+}
+
+.menu-master-toolbar {
+  max-width: 1220px;
+  margin: 0 auto 16px;
+}
+
+.menu-master-select {
+  min-width: min(520px, 100%);
+}
+
+.menu-document-scroll {
+  width: 100%;
+  overflow: auto;
+  padding-bottom: 4px;
+}
+
+.menu-master-paper {
+  width: 1180px;
+  min-height: 820px;
+  margin: 0 auto;
+  padding: 28px 34px 34px;
+  color: #111827;
+  background: #fff;
+  border: 1px solid #cfd5dd;
+  box-shadow: 0 12px 32px rgba(15, 23, 42, .08);
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+.menu-doc-top {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 220px;
+  gap: 28px;
+  align-items: start;
+  padding-bottom: 22px;
+  border-bottom: 2px solid #111827;
+}
+
+.menu-doc-top h2 {
+  margin: 0 0 16px;
+  color: #111827;
+  font-size: 18px;
+  line-height: 1.15;
+  font-weight: 500;
+}
+
+.menu-doc-top p {
+  margin: 5px 0;
+  color: #111827;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.menu-doc-airline {
+  color: #df875e;
+  font-size: 38px;
+  line-height: 1;
+  font-weight: 400;
+  text-align: right;
+}
+
+.menu-section-title {
+  margin: 16px 0 6px;
+  color: #111827;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.menu-detail-table,
+.menu-summary-table,
+.menu-reference-matrix {
+  width: 100%;
+  border-collapse: collapse;
+  border-spacing: 0;
+  table-layout: fixed;
+}
+
+.menu-detail-table {
+  margin-bottom: 14px;
+}
+
+.menu-summary-table {
+  width: 62%;
+  min-width: 620px;
+  margin: 0 0 10px 0;
+}
+
+.menu-detail-table th,
+.menu-detail-table td,
+.menu-summary-table th,
+.menu-summary-table td,
+.menu-reference-matrix th,
+.menu-reference-matrix td {
+  position: static;
+  padding: 5px 6px;
+  border: 1px solid #9aa3ad;
+  color: #111827;
+  background: #fff;
+  font-size: 11px;
+  font-weight: 400;
+  text-transform: none;
+  white-space: normal;
+}
+
+.menu-detail-table th,
+.menu-summary-table th,
+.menu-reference-matrix th {
+  font-weight: 700;
+  text-decoration: underline;
+}
+
+.menu-detail-table td,
+.menu-summary-table td {
+  min-height: 26px;
+}
+
+.menu-matrix-wrap {
+  overflow: visible;
+}
+
+.menu-reference-matrix {
+  table-layout: auto;
+}
+
+.menu-reference-matrix th:first-child,
+.menu-reference-matrix td:first-child {
+  width: 42px;
+  text-align: center;
+}
+
+.menu-reference-matrix th:nth-child(2),
+.menu-reference-matrix td:nth-child(2) {
+  width: 132px;
+}
+
+.menu-reference-matrix th:nth-child(3),
+.menu-reference-matrix td:nth-child(3) {
+  width: 300px;
+}
+
+.menu-reference-matrix th:nth-child(4),
+.menu-reference-matrix td:nth-child(4) {
+  width: 76px;
+  text-align: center;
+}
+
+.menu-reference-matrix th:nth-child(n+5),
+.menu-reference-matrix td:nth-child(n+5) {
+  width: 32px;
+  min-width: 32px;
+  padding-left: 3px;
+  padding-right: 3px;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.menu-reference-matrix td {
+  height: 34px;
+  border-color: transparent;
+  vertical-align: top;
+}
+
+.menu-reference-matrix thead th {
+  border-color: transparent;
+  border-bottom-color: #9aa3ad;
+}
+
+.menu-reference-matrix td:nth-child(2) span {
+  display: block;
+  margin-bottom: 2px;
+  font-size: 9px;
+  font-style: italic;
+  font-weight: 700;
+}
+
+.menu-reference-matrix td:nth-child(2) b {
+  display: block;
+  font-size: 10px;
+  font-weight: 400;
+}
+
 .day-pills {
   display: flex;
   align-items: center;

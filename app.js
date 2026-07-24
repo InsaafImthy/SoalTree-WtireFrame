@@ -1108,6 +1108,7 @@ function saveState() {
 function setScreen(screen) {
   state.screen = screen;
   if (screen === "menu-master") state.menuMasterView = "list";
+  if (screen === "loading-sheet-master") state.loadingSheetView = "list";
   saveState();
   render();
 }
@@ -1754,42 +1755,64 @@ function copyFirstToSecond() {
 
 function updateLoadingRow(index, key, value) {
   const row = state.loadingChart.rows[index];
-  if (!row) return;
-  row[key] = value;
-  if (key === "ratioType" || key === "ratioValue") {
-    row.remarks = row.ratioValue === "1:1" ? "Per Pax" : `${row.ratioValue} ratio`;
-  }
   const loadingSheet = getLoadingSheetById(state.selectedLoadingSheetId);
   const line = loadingSheet?.lines?.[index];
-  if (line) {
-    if (key === "code") line.menuItemCode = value;
-    if (key === "name") line.menuItemName = value;
-    if (key === "unit") line.unit = value;
-    if (key === "ratioType") line.ratioType = normalizeRatioType(value);
-    if (key === "ratioValue") line.ratioValue = value;
-    if (key === "remarks") line.remarks = value;
+  if (!line) return;
+  const menu = getMenuById(loadingSheet.menuId);
+  if (key === "menuLineId") {
+    const menuLine = menu?.lines?.find((item) => item.id === value);
+    if (!menuLine) {
+      showToast("Select an active menu item from this Loading Sheet's Menu Master.");
+      return;
+    }
+    line.menuLineId = menuLine.id;
+    line.menuItemCode = menuLine.itemCode;
+    line.menuItemName = menuLine.itemName;
+    line.category = menuLine.category;
+    line.unit = menuLine.unit;
+  } else if (key === "ratioType") {
+    line.ratioType = value;
+  } else if (["fixedQuantity", "quantityPerPassenger", "minimumQuantity", "bufferPercentage", "displaySequence"].includes(key)) {
+    line[key] = Number(value || 0);
+  } else {
+    line[key] = value;
   }
+  if (line.ratioType === "one_to_one" && !line.ratioValue) {
+    line.ratioValue = "1:1";
+    line.quantityPerPassenger = 1;
+  }
+  if (row) {
+    row.code = line.menuItemCode;
+    row.name = line.menuItemName;
+    row.unit = line.unit;
+    row.ratioType = loadingRatioLabel(line.ratioType);
+    row.ratioValue = line.ratioValue || "";
+    row.remarks = line.remarks || line.category || "";
+  }
+  logAudit("Master edited", "Loading Sheet Master", loadingSheet.id, `Updated loading line ${line.menuItemCode || index + 1}`);
   saveState();
   render();
 }
 
 function addLoadingRow() {
   const loadingSheet = getLoadingSheetById(state.selectedLoadingSheetId);
-  const menu = getMenuById(loadingSheet?.menuId) || getMenuById(state.selectedMenuId);
+  const menu = getMenuById(loadingSheet?.menuId);
   if (!loadingSheet || !menu) {
     showToast("Select a menu loading sheet before adding rows.");
     return;
   }
-  const sequence = Math.max(state.loadingChart.rows.length, menu.lines.length, loadingSheet.lines.length) + 1;
-  const itemCode = nextMenuItemCode(menu, sequence);
-  const menuLine = makeMenuLine(itemCode, "New Menu Item", "Other", loadingSheet.mealType || state.loadingChart.mealType, "Other", "Pcs", 0, sequence);
-  menu.lines.push(menuLine);
-  const chartRow = { code: itemCode, name: menuLine.itemName, unit: menuLine.unit, ratioType: "1 : 1 (Per Pax)", ratioValue: "1:1", remarks: "Per Pax" };
-  state.loadingChart.rows.push(chartRow);
+  const usedIds = new Set((loadingSheet.lines || []).map((line) => line.menuLineId).filter(Boolean));
+  const menuLine = (menu.lines || []).find((line) => line.status === "Active" && !usedIds.has(line.id))
+    || (menu.lines || []).find((line) => line.status === "Active");
+  if (!menuLine) {
+    showToast("Selected Menu Master has no active items to add.");
+    return;
+  }
+  const sequence = Math.max(0, ...loadingSheet.lines.map((line) => Number(line.displaySequence || 0))) + 1;
   loadingSheet.lines.push({
     id: generateId("lsln", `${loadingSheet.id}-${sequence}`),
     menuLineId: menuLine.id,
-    menuItemCode: itemCode,
+    menuItemCode: menuLine.itemCode,
     menuItemName: menuLine.itemName,
     category: menuLine.category,
     unit: menuLine.unit,
@@ -1805,7 +1828,8 @@ function addLoadingRow() {
     displaySequence: sequence,
     remarks: "Per Pax"
   });
-  logAudit("Master edited", "Menu Master", menu.id, `Added loading row ${itemCode}`);
+  syncLegacyLoadingChart();
+  logAudit("Master edited", "Loading Sheet Master", loadingSheet.id, `Added loading line for ${menuLine.itemCode}`);
   saveState();
   render();
 }
@@ -1816,26 +1840,35 @@ function deleteLastLoadingRow() {
 
 function deleteLoadingRow(index) {
   const loadingSheet = getLoadingSheetById(state.selectedLoadingSheetId);
-  const menu = getMenuById(loadingSheet?.menuId) || getMenuById(state.selectedMenuId);
-  if (!loadingSheet || !menu || index < 0) return;
-  if (state.loadingChart.rows.length <= 1) {
+  if (!loadingSheet || index < 0) return;
+  if (loadingSheet.lines.length <= 1) {
     showToast("At least one loading row is required.");
     return;
   }
-  const removedChartRow = state.loadingChart.rows.splice(index, 1)[0];
   const removedLoadingLine = loadingSheet.lines.splice(index, 1)[0];
-  const removeCode = removedLoadingLine?.menuItemCode || removedChartRow?.code;
-  menu.lines = menu.lines.filter((line) => line.id !== removedLoadingLine?.menuLineId && line.itemCode !== removeCode);
-  logAudit("Master edited", "Menu Master", menu.id, `Deleted loading row ${removeCode || index + 1}`);
+  syncLegacyLoadingChart();
+  logAudit("Master edited", "Loading Sheet Master", loadingSheet.id, `Removed loading line for ${removedLoadingLine?.menuItemCode || index + 1}`);
   saveState();
   render();
 }
 
 function importLoadingRowsFromMenu() {
   const loadingSheet = getLoadingSheetById(state.selectedLoadingSheetId);
-  const menu = getMenuById(loadingSheet?.menuId) || getMenuById(state.selectedMenuId);
+  const menu = getMenuById(loadingSheet?.menuId);
   if (!loadingSheet || !menu) return;
-  loadingSheet.lines = (menu.lines || []).map((line, index) => ({
+  if ((loadingSheet.lines || []).length) {
+    openConfirmModal("Import Menu Items", "Replace existing Loading Sheet lines with active items from the selected Menu Master?", "confirmImportLoadingRowsFromMenu()");
+    return;
+  }
+  confirmImportLoadingRowsFromMenu();
+}
+
+function confirmImportLoadingRowsFromMenu() {
+  const loadingSheet = getLoadingSheetById(state.selectedLoadingSheetId);
+  const menu = getMenuById(loadingSheet?.menuId);
+  if (!loadingSheet || !menu) return;
+  const activeLines = (menu.lines || []).filter((line) => line.status === "Active");
+  loadingSheet.lines = activeLines.map((line, index) => ({
     id: generateId("lsln", `${loadingSheet.id}-${line.id}-${index}`),
     menuLineId: line.id,
     menuItemCode: line.itemCode,
@@ -1855,7 +1888,9 @@ function importLoadingRowsFromMenu() {
     remarks: line.category || "Per Pax"
   }));
   syncLegacyLoadingChart();
+  logAudit("Master edited", "Loading Sheet Master", loadingSheet.id, `Imported ${loadingSheet.lines.length} active menu items from ${menu.menuCode}`);
   saveState();
+  closeModal();
   render();
 }
 
@@ -2134,6 +2169,11 @@ function getFlightMasterById(id) {
   return state.masters?.flights?.find((item) => item.id === id);
 }
 
+function flightLabel(flight) {
+  if (!flight) return "-";
+  return `${flight.airline || ""} ${flight.flightNumber || ""} ${flight.sector || ""}`.trim() || "-";
+}
+
 function getMenuById(id) {
   return state.masters?.menus?.find((item) => item.id === id);
 }
@@ -2300,8 +2340,8 @@ function isActiveNav(label, screen) {
     challan: "Challan",
     "challan-preview": "Challan Preview",
     invoice: "Invoice",
-    "loading-maintenance": "MLC Maintenance",
-    "loading-preview": "MLC Preview"
+    "loading-maintenance": "Loading Sheet Master",
+    "loading-preview": "Loading Sheet Master"
   };
   return state.screen === screen && activeLabels[state.screen] === label;
 }
@@ -2422,9 +2462,6 @@ function renderMenuMaster() {
   const menus = masterRows(config);
   const selectedMenu = getMenuById(state.selectedMenuId) || menus[0] || emptyMenuMaster();
   state.selectedMenuId = selectedMenu.id;
-  const loadingSheet = findLoadingSheetForMenu(selectedMenu);
-  const flight = findFlightForMenu(selectedMenu, loadingSheet);
-  const mapping = state.masters.flightMenuMappings.find((item) => item.menuId === selectedMenu.id && item.flightMasterId === flight?.id);
   const body = `
     <section class="content menu-master-content">
       <div class="toolbar master-toolbar menu-master-toolbar">
@@ -2437,25 +2474,28 @@ function renderMenuMaster() {
         </div>
         <div class="toolbar-group toolbar-group--end">
           <button type="button" class="btn green" onclick="openMasterModal('menus')">Add Menu</button>
-          <button type="button" class="btn" onclick="openMasterModal('menus','${selectedMenu.id}','view')">Record Details</button>
-          <button type="button" class="btn green" onclick="openMenuMasterLoadingEdit('${selectedMenu.id}')">Edit Menu</button>
+          <button type="button" class="btn green" onclick="openMenuMasterEditor('${selectedMenu.id}')">Edit Menu</button>
           <button type="button" class="btn" onclick="cloneMasterRecord('menus','${selectedMenu.id}')">Clone Menu</button>
           <button type="button" class="btn" onclick="window.print()">Print</button>
         </div>
       </div>
-      ${menuMasterReferenceDocument(selectedMenu, loadingSheet, flight, mapping)}
-      <div class="footer-note">Menu Master preview is linked to Flight Master, Flight-Menu Mapping, and Loading Sheet Master so operations see the same menu, effective period, ratios, and calculated quantity matrix.</div>
+      ${menuMasterDetailDocument(selectedMenu)}
+      <div class="footer-note">Menu Master stores reusable menu definitions, dish pricing, tax, and billing codes. Flight loading rules are maintained in Loading Sheet Master.</div>
     </section>
   `;
-  return layout("Menu Master", "Meal loading chart style menu master view", body);
+  return layout("Menu Master", "View menu definition, dishes, pricing, and billing information", body);
 }
 
-function openMenuMasterChart(id) {
+function openMenuMasterDetails(id) {
   state.screen = "menu-master";
   state.selectedMenuId = id;
   state.menuMasterView = "detail";
   saveState();
   render();
+}
+
+function openMenuMasterChart(id) {
+  openMenuMasterDetails(id);
 }
 
 function showMenuMasterTable() {
@@ -2464,20 +2504,12 @@ function showMenuMasterTable() {
   render();
 }
 
+function openMenuMasterEditor(id = "") {
+  openMasterModal("menus", id, "edit");
+}
+
 function openMenuMasterLoadingEdit(id) {
-  const menu = getMenuById(id);
-  if (!menu) {
-    showToast("Select a menu before editing.");
-    return;
-  }
-  let loadingSheet = findLoadingSheetForMenu(menu);
-  if (!loadingSheet) {
-    loadingSheet = createLoadingSheetForMenu(menu);
-    state.masters.loadingSheets.push(loadingSheet);
-    logAudit("Master created", "Loading Sheet Master", loadingSheet.id, `Created from Menu Master ${menu.menuCode}`);
-  }
-  state.selectedMenuId = menu.id;
-  openLoadingMaintenance(loadingSheet.id, "menu-master");
+  openMenuMasterEditor(id);
 }
 
 function renderMappingMaster() {
@@ -2489,16 +2521,53 @@ function renderAncillaryMaster() {
 }
 
 function renderLoadingSheetMaster() {
-  return renderMasterScreen(masterConfigs().loadingSheets);
+  const config = masterConfigs().loadingSheets;
+  if (state.loadingSheetView !== "detail") return renderMasterScreen(config);
+
+  const loadingSheets = masterRows(config);
+  const selectedSheet = getLoadingSheetById(state.selectedLoadingSheetId) || loadingSheets[0] || emptyLoadingSheet();
+  state.selectedLoadingSheetId = selectedSheet.id;
+  const flight = getFlightMasterById(selectedSheet.flightMasterId);
+  const menu = getMenuById(selectedSheet.menuId);
+  const body = `
+    <section class="content menu-master-content">
+      <div class="toolbar master-toolbar menu-master-toolbar">
+        <div class="toolbar-group toolbar-group--start">
+          <button type="button" class="btn" onclick="showLoadingSheetTable()">Back to Table</button>
+          <select class="field menu-master-select" onchange="openLoadingSheetDetails(this.value)">
+            ${loadingSheets.map((sheet) => `<option value="${escapeHtml(sheet.id)}" ${sheet.id === selectedSheet.id ? "selected" : ""}>${escapeHtml(sheet.loadingSheetCode)} - ${escapeHtml(flightLabel(getFlightMasterById(sheet.flightMasterId)))}</option>`).join("")}
+          </select>
+          <span class="badge ${selectedSheet.status.toLowerCase()}">${escapeHtml(selectedSheet.status)}</span>
+        </div>
+        <div class="toolbar-group toolbar-group--end">
+          <button type="button" class="btn green" onclick="openMasterModal('loadingSheets')">Add Loading Sheet</button>
+          <button type="button" class="btn" onclick="openMasterModal('loadingSheets','${selectedSheet.id}','view')">Record Details</button>
+          <button type="button" class="btn green" onclick="openLoadingMaintenance('${selectedSheet.id}')">Edit Loading Sheet</button>
+          <button type="button" class="btn" onclick="cloneMasterRecord('loadingSheets','${selectedSheet.id}')">Clone Version</button>
+          <button type="button" class="btn" onclick="previewLoadingSheet('${selectedSheet.id}')">Preview Matrix</button>
+          <button type="button" class="btn" onclick="window.print()">Print</button>
+        </div>
+      </div>
+      ${loadingSheetReferenceDocument(selectedSheet, flight, menu)}
+      <div class="footer-note">Loading Sheet Master owns the operational loading chart, menu association, ratios, quantity matrix, and print-ready meal loading document.</div>
+    </section>
+  `;
+  return layout("Loading Sheet Master", "Formal meal loading chart, ratios, and calculated quantities by flight and menu", body);
 }
 
-function findLoadingSheetForMenu(menu) {
-  if (!menu) return null;
-  const selected = getLoadingSheetById(state.selectedLoadingSheetId);
-  if (selected?.menuId === menu.id) return selected;
-  return state.masters.loadingSheets.find((sheet) => sheet.menuId === menu.id && sheet.status === "Active")
-    || state.masters.loadingSheets.find((sheet) => sheet.menuId === menu.id)
-    || null;
+function openLoadingSheetDetails(id) {
+  state.screen = "loading-sheet-master";
+  state.selectedLoadingSheetId = id;
+  state.loadingSheetView = "detail";
+  syncLegacyLoadingChart();
+  saveState();
+  render();
+}
+
+function showLoadingSheetTable() {
+  state.loadingSheetView = "list";
+  saveState();
+  render();
 }
 
 function findFlightForMenu(menu, loadingSheet) {
@@ -2550,19 +2619,71 @@ function createLoadingSheetForMenu(menu) {
   });
 }
 
-function menuMasterReferenceDocument(menu, loadingSheet, flight, mapping) {
-  const rows = menuMasterReferenceRows(menu, loadingSheet);
+function menuMasterDetailDocument(menu) {
+  const rows = [...(menu?.lines || [])].sort((a, b) => Number(a.displaySequence || 0) - Number(b.displaySequence || 0));
+  return `
+    <div class="master-detail-card">
+      <div class="detail-title-row">
+        <div>
+          <h2>${escapeHtml(menu.menuCode || "Untitled Menu")}</h2>
+          <p>${escapeHtml(menu.menuName || "Menu definition")}</p>
+        </div>
+        <span class="badge ${menu.status.toLowerCase()}">${escapeHtml(menu.status)}</span>
+      </div>
+      <div class="detail-grid">
+        ${detailItem("Menu Cycle", menu.menuCycle)}
+        ${detailItem("Service Type", menu.serviceType)}
+        ${detailItem("Service Sequence", menu.serviceSequence)}
+        ${detailItem("Cabin Classes", (menu.cabinClasses || []).join(", "))}
+        ${detailItem("Currency", menu.currency)}
+        ${detailItem("Version", menu.version)}
+        ${detailItem("Effective From", menu.effectiveFrom)}
+        ${detailItem("Effective To", menu.effectiveTo)}
+        ${detailItem("Description", menu.description || "-", "wide")}
+      </div>
+      <div class="panel-head detail-panel-head"><h2>Menu Items</h2><span class="muted">${rows.length} configured lines</span></div>
+      <div class="table-wrap">
+        <table class="data-table menu-items-table">
+          <thead><tr><th>Sequence</th><th>Dish Code</th><th>Dish Name</th><th>Category</th><th>Meal Type</th><th>Classification</th><th>Special Meal Code</th><th>Unit</th><th class="num">Unit Price</th><th class="num">Tax %</th><th>Invoice Item Code</th><th>Status</th></tr></thead>
+          <tbody>
+            ${rows.map((line) => `<tr>
+              <td class="num">${Number(line.displaySequence || 0)}</td>
+              <td class="cell-code">${escapeHtml(line.itemCode)}</td>
+              <td class="cell-name">${escapeHtml(line.itemName)}</td>
+              <td>${escapeHtml(line.category)}</td>
+              <td>${escapeHtml(line.mealType)}</td>
+              <td>${escapeHtml(line.classification)}</td>
+              <td>${escapeHtml(line.specialMealCode || "-")}</td>
+              <td>${escapeHtml(line.unit)}</td>
+              <td class="num">${Number(line.unitPrice || 0).toFixed(2)}</td>
+              <td class="num">${Number(line.taxPercentage || 0).toFixed(2)}</td>
+              <td>${escapeHtml(line.invoiceItemCode || "-")}</td>
+              <td>${badge(line.status || "Active")}</td>
+            </tr>`).join("") || `<tr><td colspan="12" class="empty-state">No dish lines configured for this menu.</td></tr>`}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
+function detailItem(label, value, className = "") {
+  return `<div class="detail-item ${className}"><span>${escapeHtml(label)}</span><b>${escapeHtml(value || "-")}</b></div>`;
+}
+
+function loadingSheetReferenceDocument(loadingSheet, flight, menu) {
+  const rows = loadingSheetDocumentRows(loadingSheet, menu);
   const points = Array.from({ length: 20 }, (_, index) => index + 1);
-  const effectiveFrom = loadingSheet?.effectiveFrom || mapping?.effectiveFrom || menu.effectiveFrom;
-  const effectiveTo = loadingSheet?.effectiveTo || mapping?.effectiveTo || menu.effectiveTo;
+  const effectiveFrom = loadingSheet?.effectiveFrom || "";
+  const effectiveTo = loadingSheet?.effectiveTo || "";
   const rotation = parseRotationRange(loadingSheet?.rotation);
-  const mealCode = loadingSheet?.loadingSheetCode || menu.menuCode;
-  const serviceSeq = loadingSheet?.serviceSequence || mapping?.serviceSequence || menu.serviceSequence || "1";
-  const mealType = loadingSheet?.mealType || mapping?.serviceType || menu.serviceType;
-  const sector = compactSector(flight?.sector || menu.menuName);
+  const mealCode = loadingSheet?.loadingSheetCode || "-";
+  const serviceSeq = loadingSheet?.serviceSequence || menu?.serviceSequence || "1";
+  const mealType = loadingSheet?.mealType || menu?.serviceType || "-";
+  const sector = compactSector(flight?.sector || "-");
   const dayOps = dayOpsDigits(flight?.operatingDays);
   const aircraftType = loadingSheet?.aircraftType || flight?.aircraftType || "-";
-  const classLabel = cabinClassShort(menu.cabinClasses?.[0]);
+  const classLabel = cabinClassShort(menu?.cabinClasses?.[0] || loadingSheet?.lines?.[0]?.cabinClass);
   return `
     <div class="menu-document-scroll">
       <article class="menu-master-paper">
@@ -2597,7 +2718,7 @@ function menuMasterReferenceDocument(menu, loadingSheet, flight, mapping) {
         <table class="menu-summary-table">
           <tbody>
             <tr><th>Class</th><th>Meal Code</th><th>Meal Name</th><th>Meal Type</th><th>Version</th><th>Effective Date</th></tr>
-            <tr><td>${escapeHtml(classLabel)}</td><td>${escapeHtml(mealCode)}</td><td>${escapeHtml(menu.menuName)}</td><td>${escapeHtml(mealType)}</td><td>${escapeHtml(menu.version || loadingSheet?.version || "-")}</td><td>${escapeHtml(formatDocDate(menu.effectiveFrom || effectiveFrom))}</td></tr>
+            <tr><td>${escapeHtml(classLabel)}</td><td>${escapeHtml(mealCode)}</td><td>${escapeHtml(menu?.menuName || "-")}</td><td>${escapeHtml(mealType)}</td><td>${escapeHtml(loadingSheet?.version || menu?.version || "-")}</td><td>${escapeHtml(formatDocDate(effectiveFrom))}</td></tr>
           </tbody>
         </table>
 
@@ -2624,20 +2745,37 @@ function menuMasterReferenceDocument(menu, loadingSheet, flight, mapping) {
   `;
 }
 
-function menuMasterReferenceRows(menu, loadingSheet) {
-  return [...(menu?.lines || [])]
+function loadingSheetDocumentRows(loadingSheet, menu) {
+  return [...(loadingSheet?.lines || [])]
     .sort((a, b) => Number(a.displaySequence || 0) - Number(b.displaySequence || 0))
     .map((line, index) => {
-      const loadingLine = loadingSheet?.lines?.find((item) => item.menuLineId === line.id || item.menuItemCode === line.itemCode) || {};
+      const menuLine = menu?.lines?.find((item) => item.id === line.menuLineId || item.itemCode === line.menuItemCode) || {};
       return {
-        code: line.itemCode || loadingLine.menuItemCode || `ITEM-${index + 1}`,
-        name: line.itemName || loadingLine.menuItemName || "",
-        group: String(line.category || loadingLine.category || "Meal").toUpperCase(),
-        ratio: menuReferenceRatioLabel(loadingLine),
-        ratioType: loadingLine.ratioType || "one_to_one",
-        ratioValue: loadingLine.ratioValue || "1:1"
+        code: line.menuItemCode || menuLine.itemCode || `ITEM-${index + 1}`,
+        name: line.menuItemName || menuLine.itemName || "",
+        group: String(line.category || menuLine.category || "Meal").toUpperCase(),
+        ratio: menuReferenceRatioLabel(line),
+        ratioType: line.ratioType || "one_to_one",
+        ratioValue: line.ratioValue || "1:1"
       };
     });
+}
+
+function menuMasterReferenceDocument(menu, loadingSheet, flight) {
+  return loadingSheetReferenceDocument(loadingSheet || findLoadingSheetForMenu(menu), flight || findFlightForMenu(menu, loadingSheet), menu);
+}
+
+function menuMasterReferenceRows(menu, loadingSheet) {
+  return loadingSheetDocumentRows(loadingSheet || findLoadingSheetForMenu(menu), menu);
+}
+
+function findLoadingSheetForMenu(menu) {
+  if (!menu) return null;
+  const selected = getLoadingSheetById(state.selectedLoadingSheetId);
+  if (selected?.menuId === menu.id) return selected;
+  return state.masters.loadingSheets.find((sheet) => sheet.menuId === menu.id && sheet.status === "Active")
+    || state.masters.loadingSheets.find((sheet) => sheet.menuId === menu.id)
+    || null;
 }
 
 function menuReferenceRatioLabel(line = {}) {
@@ -2884,7 +3022,7 @@ function masterConfigs() {
       create: emptyLoadingSheet,
       validate: validateLoadingSheet,
       search: (row) => `${row.loadingSheetCode} ${getFlightMasterById(row.flightMasterId)?.airline || ""} ${getFlightMasterById(row.flightMasterId)?.flightNumber || ""} ${getMenuById(row.menuId)?.menuCode || ""} ${row.mealType}`,
-      extraActions: (row) => `<button type="button" class="btn" onclick="openLoadingMaintenance('${row.id}')">Maintenance</button><button type="button" class="btn" onclick="previewLoadingSheet('${row.id}')">Preview Matrix</button><button type="button" class="btn" onclick="cloneMasterRecord('loadingSheets','${row.id}')">Clone Version</button>`
+      extraActions: (row) => `<button type="button" class="btn" onclick="previewLoadingSheet('${row.id}')">Preview Matrix</button><button type="button" class="btn" onclick="cloneMasterRecord('loadingSheets','${row.id}')">Clone Version</button>`
     }
   };
 }
@@ -2931,8 +3069,16 @@ function masterRows(config) {
 }
 
 function masterTableRow(config, row) {
-  const viewHandler = config.key === "menus" ? `openMenuMasterChart('${row.id}')` : `openMasterModal('${config.key}','${row.id}','view')`;
-  const editHandler = config.key === "menus" ? `openMenuMasterLoadingEdit('${row.id}')` : `openMasterModal('${config.key}','${row.id}','edit')`;
+  const viewHandler = config.key === "menus"
+    ? `openMenuMasterDetails('${row.id}')`
+    : config.key === "loadingSheets"
+      ? `openLoadingSheetDetails('${row.id}')`
+      : `openMasterModal('${config.key}','${row.id}','view')`;
+  const editHandler = config.key === "menus"
+    ? `openMenuMasterEditor('${row.id}')`
+    : config.key === "loadingSheets"
+      ? `openLoadingMaintenance('${row.id}')`
+      : `openMasterModal('${config.key}','${row.id}','edit')`;
   return `
     <tr>
       ${config.columns.map(([label, getter, className]) => masterTableCell(getter(row), className)).join("")}
@@ -3027,6 +3173,11 @@ function openMasterModal(key, id = "", mode = "edit") {
       </div>
     </div>
   `);
+  const form = document.getElementById("master-form");
+  if (key === "ancillaryItems" && form) {
+    updateAncillaryApplicabilityUi(form);
+    updateAncillaryRuleUi(form);
+  }
 }
 
 function saveMasterForm(event, key, id = "") {
@@ -3137,7 +3288,7 @@ function previewLoadingSheet(id) {
 
 function openLoadingMaintenance(id, returnScreen = "loading-sheet-master") {
   state.selectedLoadingSheetId = id;
-  state.loadingMaintenanceReturn = returnScreen;
+  state.loadingMaintenanceReturn = "loading-sheet-master";
   syncLegacyLoadingChart();
   saveState();
   setScreen("loading-maintenance");
@@ -3150,38 +3301,25 @@ function saveLoadingSheetFromChart() {
     return;
   }
   const flight = state.masters.flights.find((item) => item.flightNumber === state.loadingChart.flightNo && item.airline === state.loadingChart.airline);
-  const menu = getMenuById(loadingSheet.menuId) || state.masters.menus.find((item) => item.serviceType === state.loadingChart.mealType);
+  const menu = getMenuById(loadingSheet.menuId);
   loadingSheet.loadingSheetCode = state.loadingChart.chartCode;
   loadingSheet.version = state.loadingChart.version;
   loadingSheet.flightMasterId = flight?.id || loadingSheet.flightMasterId;
   loadingSheet.aircraftType = state.loadingChart.aircraftType;
-  loadingSheet.menuId = menu?.id || loadingSheet.menuId;
   loadingSheet.mealType = state.loadingChart.mealType;
   loadingSheet.effectiveFrom = state.loadingChart.effectiveFrom;
   loadingSheet.effectiveTo = state.loadingChart.effectiveTo;
   loadingSheet.rotation = `${state.loadingChart.rotationFrom || ""} ${state.loadingChart.rotationTo || ""}`.trim();
   loadingSheet.notes = state.loadingChart.notes;
-  loadingSheet.lines = state.loadingChart.rows.map((row, index) => {
-    const menuLine = menu?.lines?.find((line) => line.itemCode === row.code) || menu?.lines?.[index];
+  loadingSheet.lines = (loadingSheet.lines || []).map((line, index) => {
+    const menuLine = menu?.lines?.find((item) => item.id === line.menuLineId);
     return {
-      ...(loadingSheet.lines[index] || {}),
-      id: loadingSheet.lines[index]?.id || generateId("lsln", index),
-      menuLineId: menuLine?.id || loadingSheet.lines[index]?.menuLineId || "",
-      menuItemCode: row.code,
-      menuItemName: row.name,
-      category: menuLine?.category || categoryFromDish(row.name, row.remarks),
-      unit: row.unit,
-      cabinClass: row.ratioType?.startsWith("J") ? "Business" : row.ratioType?.startsWith("Crew") ? "Crew" : "All",
-      ratioType: normalizeRatioType(row.ratioType),
-      ratioValue: row.ratioValue,
-      fixedQuantity: 0,
-      quantityPerPassenger: row.ratioValue === "1:1" ? 1 : 0,
-      minimumQuantity: 0,
-      maximumQuantity: "",
-      bufferPercentage: 0,
-      roundingMethod: "ceil",
-      displaySequence: index + 1,
-      remarks: row.remarks || ""
+      ...line,
+      menuItemCode: menuLine?.itemCode || line.menuItemCode,
+      menuItemName: menuLine?.itemName || line.menuItemName,
+      category: menuLine?.category || line.category,
+      unit: menuLine?.unit || line.unit,
+      displaySequence: Number(line.displaySequence || index + 1)
     };
   });
   const errors = validateLoadingSheet(loadingSheet, loadingSheet.id);
@@ -3228,8 +3366,7 @@ function flightMasterFields(row, readonly) {
 }
 
 function menuMasterFields(row, readonly) {
-  return formGrid([
-    inputSpec("Internal menu ID", "id", row.id, true),
+  return hiddenInput("id", row.id) + formGrid([
     inputSpec("Menu code *", "menuCode", row.menuCode),
     inputSpec("Menu name *", "menuName", row.menuName),
     inputSpec("Menu cycle", "menuCycle", row.menuCycle),
@@ -3241,7 +3378,7 @@ function menuMasterFields(row, readonly) {
     inputSpec("Effective from", "effectiveFrom", row.effectiveFrom, false, "date"),
     inputSpec("Effective to", "effectiveTo", row.effectiveTo, false, "date"),
     selectSpec("Status", "status", row.status, ["Active", "Inactive"])
-  ], readonly) + textareaSpec("Description", "description", row.description, readonly) + jsonEditor("Menu lines", "linesJson", row.lines, readonly, menuLineHint());
+  ], readonly) + textareaSpec("Description", "description", row.description, readonly) + menuLinesEditor(row, readonly);
 }
 
 function mappingFields(row, readonly) {
@@ -3260,8 +3397,7 @@ function mappingFields(row, readonly) {
 }
 
 function ancillaryFields(row, readonly) {
-  return formGrid([
-    inputSpec("Internal ancillary item ID", "id", row.id, true),
+  return hiddenInput("id", row.id) + formGrid([
     inputSpec("Item code *", "itemCode", row.itemCode),
     inputSpec("Item name *", "itemName", row.itemName),
     inputSpec("Category", "category", row.category),
@@ -3278,17 +3414,15 @@ function ancillaryFields(row, readonly) {
       { label: "Selected flight", value: "selected_flight" },
       { label: "Selected route", value: "selected_route" },
       { label: "Selected aircraft type", value: "selected_aircraft_type" }
-    ]),
-    inputSpec("Applicable airline", "applicabilityAirline", row.applicability?.airline || ""),
-    selectSpec("Applicable flight", "applicabilityFlightMasterId", row.applicability?.flightMasterId || "", [{ label: "None", value: "" }, ...state.masters.flights.map((flight) => ({ label: `${flight.flightNumber} ${flight.sector}`, value: flight.id }))]),
-    inputSpec("Applicable route", "applicabilityRoute", row.applicability?.route || ""),
-    inputSpec("Applicable aircraft type", "applicabilityAircraftType", row.applicability?.aircraftType || "")
-  ], readonly) + textareaSpec("Description", "description", row.description, readonly) + jsonEditor("Calculation rule", "calculationRuleJson", row.calculationRule, readonly, ancillaryRuleHint());
+    ])
+  ], readonly).replace('name="applicabilityType"', `name="applicabilityType" onchange="updateAncillaryApplicabilityUi(this.form)"`)
+    + ancillaryApplicabilityFields(row, readonly)
+    + textareaSpec("Description", "description", row.description, readonly)
+    + ancillaryCalculationEditor(row, readonly);
 }
 
 function loadingSheetFields(row, readonly) {
-  return formGrid([
-    inputSpec("Internal loading sheet ID", "id", row.id, true),
+  return hiddenInput("id", row.id) + formGrid([
     inputSpec("Loading Sheet code *", "loadingSheetCode", row.loadingSheetCode),
     inputSpec("Version", "version", row.version),
     selectSpec("Flight Master *", "flightMasterId", row.flightMasterId, state.masters.flights.map((flight) => ({ label: `${flight.airline} ${flight.flightNumber} ${flight.sector}`, value: flight.id }))),
@@ -3301,7 +3435,15 @@ function loadingSheetFields(row, readonly) {
     inputSpec("Effective to", "effectiveTo", row.effectiveTo, false, "date"),
     inputSpec("Rotation", "rotation", row.rotation),
     selectSpec("Status", "status", row.status, ["Active", "Inactive"])
-  ], readonly) + derivedFlightPreview(row.flightMasterId) + textareaSpec("Notes", "notes", row.notes, readonly) + jsonEditor("Loading sheet lines", "linesJson", row.lines, readonly, loadingLineHint(row.menuId));
+  ], readonly).replace('name="menuId"', `name="menuId" onchange="refreshLoadingSheetMenuWarning(this.form)"`)
+    + derivedFlightPreview(row.flightMasterId)
+    + loadingSheetMenuWarning(row)
+    + textareaSpec("Notes", "notes", row.notes, readonly)
+    + loadingSheetLinesEditor(row, readonly);
+}
+
+function hiddenInput(name, value) {
+  return `<input type="hidden" name="${escapeHtml(name)}" value="${escapeHtml(value)}">`;
 }
 
 function inputSpec(label, name, value, readonly = false, type = "text") {
@@ -3328,27 +3470,345 @@ function textareaSpec(label, name, value, readonly = false) {
   return `<label class="full-field"><span class="muted">${escapeHtml(label)}</span><textarea name="${name}" ${readonly ? "readonly" : ""}>${escapeHtml(value)}</textarea></label>`;
 }
 
-function jsonEditor(label, name, value, readonly, hint = "") {
-  return `<label class="full-field"><span class="muted">${escapeHtml(label)}</span><textarea class="json-editor" name="${name}" ${readonly ? "readonly" : ""}>${escapeHtml(JSON.stringify(value, null, 2))}</textarea>${hint ? `<small class="muted">${escapeHtml(hint)}</small>` : ""}</label>`;
+function menuLinesEditor(menu, readonly) {
+  const rows = [...(menu.lines || [])].sort((a, b) => Number(a.displaySequence || 0) - Number(b.displaySequence || 0));
+  return `
+    <div class="structured-editor">
+      <div class="panel-head detail-panel-head">
+        <h2>Menu Items</h2>
+        ${readonly ? "" : `<button type="button" class="btn" onclick="addMenuEditorLine(this)">Add Dish</button>`}
+      </div>
+      <div class="table-wrap">
+        <table class="data-table editable-master-table">
+          <thead><tr><th>Seq</th><th>Dish Code</th><th>Dish Name</th><th>Category</th><th>Meal Type</th><th>Classification</th><th>SPML</th><th>Unit</th><th>Unit Price</th><th>Tax %</th><th>Invoice Item Code</th><th>Status</th>${readonly ? "" : "<th>Actions</th>"}</tr></thead>
+          <tbody>${rows.map((line, index) => menuLineEditorRow(line, index, readonly, menu.id)).join("") || `<tr class="empty-editor-row"><td colspan="${readonly ? 12 : 13}" class="empty-state">No dish lines yet. Use Add Dish to build the menu.</td></tr>`}</tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
+function menuLineEditorRow(line = {}, index = 0, readonly = false, menuId = "") {
+  const used = menuId && line.id ? isMenuLineUsedInTransactions(menuId, line) : false;
+  const status = line.status || "Active";
+  const control = (name, value, type = "text", className = "") => readonly
+    ? escapeHtml(value || "")
+    : `<input class="input cell-input ${className}" type="${type}" name="${name}[]" value="${escapeHtml(value)}">`;
+  const select = (name, value, options) => readonly
+    ? escapeHtml(value || "")
+    : `<select class="select cell-input" name="${name}[]">${options.map((option) => `<option value="${escapeHtml(option)}" ${String(option) === String(value) ? "selected" : ""}>${escapeHtml(option)}</option>`).join("")}</select>`;
+  return `<tr data-menu-line-row>
+    <td>${hiddenInput("menuLineId[]", line.id || generateId("mlin"))}${control("menuLineSequence", Number(line.displaySequence || index + 1), "number")}</td>
+    <td>${control("menuLineItemCode", line.itemCode || "", "text", "code-input")}</td>
+    <td>${control("menuLineItemName", line.itemName || "", "text", "dish-input")}</td>
+    <td>${control("menuLineCategory", line.category || "", "text")}</td>
+    <td>${select("menuLineMealType", line.mealType || "Hot Breakfast", ["Hot Breakfast", "Main Meal", "Snack", "Beverage", "Special Meal", "Crew Meal"])}</td>
+    <td>${control("menuLineClassification", line.classification || "", "text")}</td>
+    <td>${control("menuLineSpecialMealCode", line.specialMealCode || "", "text")}</td>
+    <td>${control("menuLineUnit", line.unit || "Pcs", "text")}</td>
+    <td>${control("menuLineUnitPrice", Number(line.unitPrice || 0), "number")}</td>
+    <td>${control("menuLineTaxPercentage", Number(line.taxPercentage || 0), "number")}</td>
+    <td>${control("menuLineInvoiceItemCode", line.invoiceItemCode || "", "text")}</td>
+    <td>${select("menuLineStatus", status, ["Active", "Inactive"])}</td>
+    ${readonly ? "" : `<td><div class="row-actions"><button type="button" class="btn icon-btn" onclick="moveEditorRow(this,-1)" title="Move up">UP</button><button type="button" class="btn icon-btn" onclick="moveEditorRow(this,1)" title="Move down">DN</button><button type="button" class="btn ${used ? "" : "danger"}" onclick="${used ? "inactivateMenuEditorLine(this)" : "removeEditorRow(this)"}">${used ? "Inactive" : "Delete"}</button></div></td>`}
+  </tr>`;
+}
+
+function addMenuEditorLine(button) {
+  const tbody = button.closest(".structured-editor").querySelector("tbody");
+  tbody.querySelector(".empty-editor-row")?.remove();
+  tbody.insertAdjacentHTML("beforeend", menuLineEditorRow({ id: generateId("mlin"), displaySequence: tbody.querySelectorAll("[data-menu-line-row]").length + 1, status: "Active" }, tbody.querySelectorAll("[data-menu-line-row]").length, false, ""));
+}
+
+function removeEditorRow(button) {
+  button.closest("tr")?.remove();
+}
+
+function inactivateMenuEditorLine(button) {
+  const row = button.closest("tr");
+  const status = row?.querySelector('[name="menuLineStatus[]"]');
+  if (status) status.value = "Inactive";
+  showToast("Referenced menu item marked inactive instead of deleted.");
+}
+
+function moveEditorRow(button, direction) {
+  const row = button.closest("tr");
+  const sibling = direction < 0 ? row?.previousElementSibling : row?.nextElementSibling;
+  if (!row || !sibling || sibling.classList.contains("empty-editor-row")) return;
+  if (direction < 0) row.parentNode.insertBefore(row, sibling);
+  else row.parentNode.insertBefore(sibling, row);
+}
+
+function ancillaryApplicabilityFields(row, readonly) {
+  const app = row.applicability || {};
+  const type = app.type || "all_airlines";
+  const style = (key) => key === type ? "" : "display:none";
+  return `<div class="form-grid applicability-grid">
+    <label data-applicability-field="selected_airline" style="${style("selected_airline")}"><span class="muted">Airline</span><input class="input" name="applicabilityAirline" value="${escapeHtml(app.airline || "")}" ${readonly ? "readonly" : ""}></label>
+    <label data-applicability-field="selected_flight" style="${style("selected_flight")}"><span class="muted">Flight Master</span><select class="select" name="applicabilityFlightMasterId" ${readonly ? "disabled" : ""}><option value="">None</option>${state.masters.flights.map((flight) => `<option value="${escapeHtml(flight.id)}" ${flight.id === app.flightMasterId ? "selected" : ""}>${escapeHtml(`${flight.flightNumber} ${flight.sector}`)}</option>`).join("")}</select></label>
+    <label data-applicability-field="selected_route" style="${style("selected_route")}"><span class="muted">Route</span><input class="input" name="applicabilityRoute" value="${escapeHtml(app.route || "")}" ${readonly ? "readonly" : ""}></label>
+    <label data-applicability-field="selected_aircraft_type" style="${style("selected_aircraft_type")}"><span class="muted">Aircraft Type</span><input class="input" name="applicabilityAircraftType" value="${escapeHtml(app.aircraftType || "")}" ${readonly ? "readonly" : ""}></label>
+  </div>${readonly ? `<div class="notice compact-notice"><span class="check">✓</span><div><b>Applicability</b><br><span class="muted">${escapeHtml(applicabilitySummary(app))}</span></div></div>` : ""}`;
+}
+
+function updateAncillaryApplicabilityUi(form) {
+  const type = form.querySelector('[name="applicabilityType"]')?.value || "all_airlines";
+  form.querySelectorAll("[data-applicability-field]").forEach((field) => {
+    field.style.display = field.dataset.applicabilityField === type ? "" : "none";
+  });
+}
+
+function ancillaryCalculationEditor(row, readonly) {
+  const rule = row.calculationRule || {};
+  return `<div class="structured-editor">
+    <div class="panel-head detail-panel-head"><h2>Calculation Rule</h2></div>
+    <div class="form-grid">
+      <label><span class="muted">Calculation Method</span><select class="select" name="calculationType" ${readonly ? "disabled" : ""} onchange="updateAncillaryRuleUi(this.form)">${calculationTypeOptions().map((option) => `<option value="${option.value}" ${option.value === rule.calculationType ? "selected" : ""}>${option.label}</option>`).join("")}</select></label>
+      ${ruleInput("fixedQuantity", "Fixed Quantity", rule.fixedQuantity, readonly, ["fixed", "fixed_plus_per_pax"])}
+      ${ruleInput("quantityPerPax", "Quantity per Passenger", rule.quantityPerPax, readonly, ["per_passenger", "per_business_pax", "per_premium_pax", "per_economy_pax", "fixed_plus_per_pax"])}
+      ${ruleInput("paxDivisor", "Passenger Divisor", rule.paxDivisor, readonly, ["per_x_pax"])}
+      ${ruleInput("bufferPercentage", "Buffer Percentage", rule.bufferPercentage, readonly, ["buffer"])}
+      ${ruleInput("minimumQuantity", "Minimum Quantity", rule.minimumQuantity, readonly, ["fixed", "per_passenger", "per_crew", "per_business_pax", "per_premium_pax", "per_economy_pax", "per_x_pax", "buffer", "minimum", "fixed_plus_per_pax", "manual"])}
+      ${ruleInput("maximumQuantity", "Maximum Quantity", rule.maximumQuantity ?? "", readonly, ["fixed", "per_passenger", "per_crew", "per_business_pax", "per_premium_pax", "per_economy_pax", "per_x_pax", "buffer", "minimum", "fixed_plus_per_pax", "manual"])}
+      <label data-rule-field="fixed per_passenger per_crew per_business_pax per_premium_pax per_economy_pax per_x_pax buffer minimum fixed_plus_per_pax manual"><span class="muted">Rounding Method</span><select class="select" name="roundingMethod" ${readonly ? "disabled" : ""}>${roundingOptions().map((option) => `<option value="${option.value}" ${option.value === rule.roundingMethod ? "selected" : ""}>${option.label}</option>`).join("")}</select></label>
+      <label data-rule-field="fixed per_passenger per_crew per_business_pax per_premium_pax per_economy_pax per_x_pax buffer minimum fixed_plus_per_pax manual"><span class="muted">Operational Override</span><select class="select" name="allowOperationalOverride" ${readonly ? "disabled" : ""}><option value="true" ${rule.allowOperationalOverride ? "selected" : ""}>Allowed</option><option value="false" ${!rule.allowOperationalOverride ? "selected" : ""}>Not Allowed</option></select></label>
+    </div>
+    <div class="table-wrap rule-summary"><table class="data-table compact-table"><tbody>${calculationRuleSummaryRows(rule).map(([label, value]) => `<tr><th>${escapeHtml(label)}</th><td>${escapeHtml(value)}</td></tr>`).join("")}</tbody></table></div>
+  </div>`;
+}
+
+function ruleInput(name, label, value, readonly, visibleFor) {
+  return `<label data-rule-field="${visibleFor.join(" ")}"><span class="muted">${escapeHtml(label)}</span><input class="input" type="number" name="${name}" value="${escapeHtml(value ?? "")}" ${readonly ? "readonly" : ""}></label>`;
+}
+
+function updateAncillaryRuleUi(form) {
+  const type = form.querySelector('[name="calculationType"]')?.value || "manual";
+  form.querySelectorAll("[data-rule-field]").forEach((field) => {
+    field.style.display = String(field.dataset.ruleField || "").split(/\s+/).includes(type) ? "" : "none";
+  });
+}
+
+function calculationTypeOptions() {
+  return [
+    { value: "fixed", label: "Fixed Quantity" },
+    { value: "per_passenger", label: "Per Passenger" },
+    { value: "per_crew", label: "Per Crew" },
+    { value: "per_business_pax", label: "Per Business Class Passenger" },
+    { value: "per_premium_pax", label: "Per Premium Economy Passenger" },
+    { value: "per_economy_pax", label: "Per Economy Passenger" },
+    { value: "per_x_pax", label: "One Unit per X Passengers" },
+    { value: "buffer", label: "Percentage Buffer" },
+    { value: "minimum", label: "Minimum Quantity" },
+    { value: "fixed_plus_per_pax", label: "Fixed Quantity plus Per Passenger" },
+    { value: "manual", label: "Manual Quantity" }
+  ];
+}
+
+function roundingOptions() {
+  return [
+    { value: "ceil", label: "Round Up" },
+    { value: "floor", label: "Round Down" },
+    { value: "round", label: "Nearest Whole Number" }
+  ];
+}
+
+function calculationRuleSummaryRows(rule = {}) {
+  const rounding = roundingOptions().find((item) => item.value === rule.roundingMethod)?.label || "Round Up";
+  return [
+    ["Calculation Method", ruleLabel(rule)],
+    ["Fixed Quantity", rule.fixedQuantity || "0"],
+    ["Quantity per Passenger", rule.quantityPerPax || "0"],
+    ["Passenger Divisor", rule.paxDivisor || "Not applicable"],
+    ["Minimum Quantity", rule.minimumQuantity || "0"],
+    ["Maximum Quantity", rule.maximumQuantity === null || rule.maximumQuantity === "" || rule.maximumQuantity === undefined ? "No Maximum" : rule.maximumQuantity],
+    ["Rounding", rounding],
+    ["Operational Override", rule.allowOperationalOverride ? "Allowed" : "Not Allowed"]
+  ];
+}
+
+function applicabilitySummary(app = {}) {
+  const labels = {
+    all_airlines: "All Airlines",
+    selected_airline: `Selected Airline: ${app.airline || "-"}`,
+    selected_flight: `Selected Flight: ${flightLabel(getFlightMasterById(app.flightMasterId))}`,
+    selected_route: `Selected Route: ${app.route || "-"}`,
+    selected_aircraft_type: `Selected Aircraft Type: ${app.aircraftType || "-"}`
+  };
+  return labels[app.type] || "All Airlines";
+}
+
+function loadingSheetMenuWarning(row) {
+  const menu = getMenuById(row.menuId);
+  const validLineIds = new Set((menu?.lines || []).map((line) => line.id));
+  const invalid = (row.lines || []).filter((line) => line.menuLineId && !validLineIds.has(line.menuLineId));
+  return `<div class="notice compact-notice loading-menu-warning" style="${invalid.length ? "" : "display:none"}"><span class="check">!</span><div><b>Menu item references need review</b><br><span class="muted">${invalid.length ? `${invalid.length} loading line(s) do not belong to the selected Menu Master. Use Import Items from Menu or choose valid menu items before saving.` : ""}</span></div></div>`;
+}
+
+function loadingSheetLinesEditor(sheet, readonly) {
+  const rows = [...(sheet.lines || [])].sort((a, b) => Number(a.displaySequence || 0) - Number(b.displaySequence || 0));
+  return `<div class="structured-editor">
+    <div class="panel-head detail-panel-head">
+      <h2>Loading Sheet Lines</h2>
+      ${readonly ? "" : `<div class="toolbar-group toolbar-group--end"><button type="button" class="btn" onclick="importEditorLoadingRowsFromMenu(this)">Import Items from Menu</button><button type="button" class="btn" onclick="addLoadingEditorLine(this)">Add Menu Item</button></div>`}
+    </div>
+    <div class="table-wrap">
+      <table class="data-table editable-master-table loading-lines-editor">
+        <thead><tr><th>Seq</th><th>Menu Item</th><th>Dish Code</th><th>Dish Name</th><th>Category</th><th>Unit</th><th>Cabin Class</th><th>Ratio Type</th><th>Ratio Value</th><th>Fixed</th><th>Per Pax</th><th>Min</th><th>Max</th><th>Buffer %</th><th>Rounding</th><th>Remarks</th>${readonly ? "" : "<th>Actions</th>"}</tr></thead>
+        <tbody>${rows.map((line, index) => loadingSheetLineEditorRow(line, index, sheet.menuId, readonly)).join("") || `<tr class="empty-editor-row"><td colspan="${readonly ? 16 : 17}" class="empty-state">No loading lines yet. Import active menu items or add selected menu items.</td></tr>`}</tbody>
+      </table>
+    </div>
+  </div>`;
+}
+
+function loadingSheetLineEditorRow(line = {}, index = 0, menuId = "", readonly = false) {
+  const menu = getMenuById(menuId);
+  const selectedLine = menu?.lines?.find((item) => item.id === line.menuLineId) || {};
+  const dish = {
+    id: line.menuLineId || selectedLine.id || "",
+    code: selectedLine.itemCode || line.menuItemCode || "",
+    name: selectedLine.itemName || line.menuItemName || "",
+    category: selectedLine.category || line.category || "",
+    unit: selectedLine.unit || line.unit || ""
+  };
+  const input = (name, value, type = "text") => readonly ? escapeHtml(value || "") : `<input class="input cell-input" type="${type}" name="${name}[]" value="${escapeHtml(value ?? "")}">`;
+  const select = (name, value, options) => readonly
+    ? escapeHtml(options.find((item) => String(item.value) === String(value))?.label || value || "")
+    : `<select class="select cell-input" name="${name}[]">${options.map((item) => `<option value="${escapeHtml(item.value)}" ${String(item.value) === String(value) ? "selected" : ""}>${escapeHtml(item.label)}</option>`).join("")}</select>`;
+  const menuOptions = menuLineOptions(menu, dish.id);
+  return `<tr data-loading-line-row>
+    <td>${hiddenInput("loadingLineId[]", line.id || generateId("lsln"))}${input("loadingLineSequence", Number(line.displaySequence || index + 1), "number")}</td>
+    <td>${readonly ? escapeHtml(`${dish.code} ${dish.name}`.trim()) : `<select class="select cell-input dish-select" name="loadingLineMenuLineId[]" onchange="applyLoadingMenuLineSelection(this)">${menuOptions}</select>`}</td>
+    <td data-derived="code">${escapeHtml(dish.code)}</td>
+    <td data-derived="name">${escapeHtml(dish.name)}</td>
+    <td data-derived="category">${escapeHtml(dish.category)}</td>
+    <td data-derived="unit">${escapeHtml(dish.unit)}</td>
+    <td>${select("loadingLineCabinClass", line.cabinClass || "All", ["All", "Business", "Premium Economy", "Economy", "Crew"].map((value) => ({ label: value, value })))}</td>
+    <td>${select("loadingLineRatioType", line.ratioType || "one_to_one", loadingRatioOptions())}</td>
+    <td>${input("loadingLineRatioValue", line.ratioValue || "1:1")}</td>
+    <td>${input("loadingLineFixedQuantity", Number(line.fixedQuantity || 0), "number")}</td>
+    <td>${input("loadingLineQuantityPerPassenger", Number(line.quantityPerPassenger || 0), "number")}</td>
+    <td>${input("loadingLineMinimumQuantity", Number(line.minimumQuantity || 0), "number")}</td>
+    <td>${input("loadingLineMaximumQuantity", line.maximumQuantity ?? "", "number")}</td>
+    <td>${input("loadingLineBufferPercentage", Number(line.bufferPercentage || 0), "number")}</td>
+    <td>${select("loadingLineRoundingMethod", line.roundingMethod || "ceil", roundingOptions())}</td>
+    <td>${input("loadingLineRemarks", line.remarks || "")}</td>
+    ${readonly ? "" : `<td><button type="button" class="btn danger" onclick="removeEditorRow(this)">Delete</button></td>`}
+  </tr>`;
+}
+
+function menuLineOptions(menu, selectedId = "") {
+  const lines = (menu?.lines || []).filter((line) => line.status === "Active" || line.id === selectedId);
+  return `<option value="">Select item</option>${lines.map((line) => `<option value="${escapeHtml(line.id)}" data-code="${escapeHtml(line.itemCode)}" data-name="${escapeHtml(line.itemName)}" data-category="${escapeHtml(line.category)}" data-unit="${escapeHtml(line.unit)}" ${line.id === selectedId ? "selected" : ""}>${escapeHtml(`${line.itemCode} - ${line.itemName}`)}</option>`).join("")}`;
+}
+
+function loadingRatioOptions() {
+  return [
+    { value: "one_to_one", label: "1 : 1 (Per Passenger)" },
+    { value: "per_x_pax", label: "One Unit per X Passengers" },
+    { value: "fixed", label: "Fixed Quantity" },
+    { value: "business_quantity", label: "Business Class Quantity" },
+    { value: "premium_economy_quantity", label: "Premium Economy Quantity" },
+    { value: "economy_quantity", label: "Economy Quantity" },
+    { value: "crew_quantity", label: "Crew Quantity" },
+    { value: "manual_matrix", label: "Manual Matrix" },
+    { value: "percentage_split", label: "Percentage Split" }
+  ];
+}
+
+function addLoadingEditorLine(button) {
+  const form = button.closest("form");
+  const menuId = form.querySelector('[name="menuId"]')?.value || "";
+  const tbody = button.closest(".structured-editor").querySelector("tbody");
+  tbody.querySelector(".empty-editor-row")?.remove();
+  const used = new Set([...tbody.querySelectorAll('[name="loadingLineMenuLineId[]"]')].map((select) => select.value).filter(Boolean));
+  const menu = getMenuById(menuId);
+  const nextMenuLine = (menu?.lines || []).find((line) => line.status === "Active" && !used.has(line.id)) || (menu?.lines || []).find((line) => line.status === "Active");
+  if (!nextMenuLine) {
+    showToast("Select a menu with active items before adding a loading line.");
+    return;
+  }
+  const row = {
+    id: generateId("lsln"),
+    menuLineId: nextMenuLine.id,
+    menuItemCode: nextMenuLine.itemCode,
+    menuItemName: nextMenuLine.itemName,
+    category: nextMenuLine.category,
+    unit: nextMenuLine.unit,
+    cabinClass: "All",
+    ratioType: "one_to_one",
+    ratioValue: "1:1",
+    fixedQuantity: 0,
+    quantityPerPassenger: 1,
+    minimumQuantity: 0,
+    maximumQuantity: "",
+    bufferPercentage: 0,
+    roundingMethod: "ceil",
+    displaySequence: tbody.querySelectorAll("[data-loading-line-row]").length + 1,
+    remarks: nextMenuLine.category || ""
+  };
+  tbody.insertAdjacentHTML("beforeend", loadingSheetLineEditorRow(row, row.displaySequence - 1, menuId, false));
+}
+
+function importEditorLoadingRowsFromMenu(button) {
+  const form = button.closest("form");
+  const menuId = form.querySelector('[name="menuId"]')?.value || "";
+  const menu = getMenuById(menuId);
+  const tbody = button.closest(".structured-editor").querySelector("tbody");
+  const lines = (menu?.lines || []).filter((line) => line.status === "Active");
+  if (!lines.length) {
+    showToast("Selected menu has no active items to import.");
+    return;
+  }
+  if (tbody.querySelectorAll("[data-loading-line-row]").length && !window.confirm("Replace existing draft loading lines with active items from the selected menu?")) return;
+  tbody.innerHTML = lines.map((line, index) => loadingSheetLineEditorRow({
+    id: generateId("lsln", `${menuId}-${line.id}-${index}`),
+    menuLineId: line.id,
+    menuItemCode: line.itemCode,
+    menuItemName: line.itemName,
+    category: line.category,
+    unit: line.unit,
+    cabinClass: "All",
+    ratioType: "one_to_one",
+    ratioValue: "1:1",
+    quantityPerPassenger: 1,
+    displaySequence: index + 1,
+    remarks: line.category || ""
+  }, index, menuId, false)).join("");
+}
+
+function applyLoadingMenuLineSelection(select) {
+  const option = select.selectedOptions[0];
+  const row = select.closest("tr");
+  if (!row || !option) return;
+  ["code", "name", "category", "unit"].forEach((field) => {
+    const cell = row.querySelector(`[data-derived="${field}"]`);
+    if (cell) cell.textContent = option.dataset[field] || "";
+  });
+}
+
+function refreshLoadingSheetMenuWarning(form) {
+  const menuId = form.querySelector('[name="menuId"]')?.value || "";
+  const menu = getMenuById(menuId);
+  let invalidCount = 0;
+  form.querySelectorAll('[name="loadingLineMenuLineId[]"]').forEach((select) => {
+    const previous = select.value;
+    select.innerHTML = menuLineOptions(menu, previous);
+    if (previous && select.value !== previous) invalidCount += 1;
+    applyLoadingMenuLineSelection(select);
+  });
+  const warning = form.querySelector(".loading-menu-warning");
+  if (warning) {
+    warning.style.display = invalidCount ? "" : "none";
+    warning.querySelector(".muted").textContent = invalidCount
+      ? `${invalidCount} loading line(s) no longer reference an item from the selected Menu Master. Import items from menu or choose valid menu items before saving.`
+      : "";
+  }
 }
 
 function derivedFlightPreview(flightMasterId) {
   const flight = getFlightMasterById(flightMasterId);
   if (!flight) return `<div class="notice compact-notice"><span class="check">!</span><div><b>No flight selected</b><br><span class="muted">Airline, flight number, and route derive from Flight Master after save.</span></div></div>`;
   return `<div class="notice compact-notice"><span class="check">✓</span><div><b>Derived from Flight Master</b><br><span class="muted">${escapeHtml(flight.airline)} / ${escapeHtml(flight.flightNumber)} / ${escapeHtml(flight.sector)}</span></div></div>`;
-}
-
-function menuLineHint() {
-  return "Each line needs itemCode, itemName, category, unit, unitPrice, status, and displaySequence.";
-}
-
-function ancillaryRuleHint() {
-  return "Supported calculationType values include fixed, per_passenger, per_x_pax, buffer, manual, and fixed_plus_per_pax.";
-}
-
-function loadingLineHint(menuId) {
-  const menu = getMenuById(menuId);
-  return menu ? `Use menuLineId from selected menu lines, for example ${menu.lines[0]?.id || "no active line yet"}.` : "Select a menu first; every loading line must reference a valid menu line.";
 }
 
 function readMasterForm(key, form, base) {
@@ -3376,7 +3836,7 @@ function readMasterForm(key, form, base) {
       ...base,
       ...data,
       cabinClasses: splitList(data.cabinClasses),
-      lines: parseJsonField(data.linesJson, base.lines)
+      lines: readMenuLineRows(form, base)
     });
   }
   if (key === "flightMenuMappings") {
@@ -3392,35 +3852,84 @@ function readMasterForm(key, form, base) {
       taxPercentage: Number(data.taxPercentage || 0),
       applicability: {
         type: data.applicabilityType,
-        airline: data.applicabilityAirline || "",
-        flightMasterId: data.applicabilityFlightMasterId || "",
-        route: data.applicabilityRoute || "",
-        aircraftType: data.applicabilityAircraftType || ""
+        airline: data.applicabilityType === "selected_airline" ? data.applicabilityAirline || "" : "",
+        flightMasterId: data.applicabilityType === "selected_flight" ? data.applicabilityFlightMasterId || "" : "",
+        route: data.applicabilityType === "selected_route" ? data.applicabilityRoute || "" : "",
+        aircraftType: data.applicabilityType === "selected_aircraft_type" ? data.applicabilityAircraftType || "" : ""
       },
-      calculationRule: parseJsonField(data.calculationRuleJson, base.calculationRule)
+      calculationRule: {
+        calculationType: data.calculationType || "manual",
+        quantityPerPax: Number(data.quantityPerPax || 0),
+        paxDivisor: Number(data.paxDivisor || 0),
+        fixedQuantity: Number(data.fixedQuantity || 0),
+        bufferPercentage: Number(data.bufferPercentage || 0),
+        minimumQuantity: Number(data.minimumQuantity || 0),
+        maximumQuantity: data.maximumQuantity === "" || data.maximumQuantity === undefined ? null : Number(data.maximumQuantity),
+        roundingMethod: data.roundingMethod || "ceil",
+        allowOperationalOverride: data.allowOperationalOverride === "true"
+      }
     });
   }
   if (key === "loadingSheets") {
+    const flight = getFlightMasterById(data.flightMasterId);
     return normalizeLoadingSheetRecord({
       ...base,
       ...data,
+      aircraftType: data.aircraftType || flight?.aircraftType || "",
       daysOfOperation: splitList(data.daysOfOperation),
-      lines: parseJsonField(data.linesJson, base.lines)
+      lines: readLoadingSheetLineRows(form, data.menuId)
     });
   }
   return { ...base, ...data };
 }
 
-function splitList(value) {
-  return String(value || "").split(",").map((item) => item.trim()).filter(Boolean);
+function readMenuLineRows(form) {
+  return [...form.querySelectorAll("[data-menu-line-row]")].map((row, index) => ({
+    id: row.querySelector('[name="menuLineId[]"]')?.value || generateId("mlin", index),
+    itemCode: row.querySelector('[name="menuLineItemCode[]"]')?.value.trim() || "",
+    itemName: row.querySelector('[name="menuLineItemName[]"]')?.value.trim() || "",
+    category: row.querySelector('[name="menuLineCategory[]"]')?.value.trim() || "",
+    mealType: row.querySelector('[name="menuLineMealType[]"]')?.value || "",
+    classification: row.querySelector('[name="menuLineClassification[]"]')?.value.trim() || "",
+    specialMealCode: row.querySelector('[name="menuLineSpecialMealCode[]"]')?.value.trim() || "",
+    unit: row.querySelector('[name="menuLineUnit[]"]')?.value.trim() || "",
+    unitPrice: Number(row.querySelector('[name="menuLineUnitPrice[]"]')?.value || 0),
+    taxPercentage: Number(row.querySelector('[name="menuLineTaxPercentage[]"]')?.value || 0),
+    invoiceItemCode: row.querySelector('[name="menuLineInvoiceItemCode[]"]')?.value.trim() || "",
+    status: row.querySelector('[name="menuLineStatus[]"]')?.value || "Active",
+    displaySequence: Number(row.querySelector('[name="menuLineSequence[]"]')?.value || index + 1)
+  })).filter((line) => line.itemCode || line.itemName);
 }
 
-function parseJsonField(value, fallback) {
-  try {
-    return JSON.parse(value || "[]");
-  } catch {
-    return fallback;
-  }
+function readLoadingSheetLineRows(form, menuId) {
+  const menu = getMenuById(menuId);
+  return [...form.querySelectorAll("[data-loading-line-row]")].map((row, index) => {
+    const menuLineId = row.querySelector('[name="loadingLineMenuLineId[]"]')?.value || "";
+    const menuLine = menu?.lines?.find((line) => line.id === menuLineId);
+    return {
+      id: row.querySelector('[name="loadingLineId[]"]')?.value || generateId("lsln", index),
+      menuLineId,
+      menuItemCode: menuLine?.itemCode || row.querySelector('[data-derived="code"]')?.textContent || "",
+      menuItemName: menuLine?.itemName || row.querySelector('[data-derived="name"]')?.textContent || "",
+      category: menuLine?.category || row.querySelector('[data-derived="category"]')?.textContent || "",
+      unit: menuLine?.unit || row.querySelector('[data-derived="unit"]')?.textContent || "",
+      cabinClass: row.querySelector('[name="loadingLineCabinClass[]"]')?.value || "All",
+      ratioType: row.querySelector('[name="loadingLineRatioType[]"]')?.value || "one_to_one",
+      ratioValue: row.querySelector('[name="loadingLineRatioValue[]"]')?.value || "",
+      fixedQuantity: Number(row.querySelector('[name="loadingLineFixedQuantity[]"]')?.value || 0),
+      quantityPerPassenger: Number(row.querySelector('[name="loadingLineQuantityPerPassenger[]"]')?.value || 0),
+      minimumQuantity: Number(row.querySelector('[name="loadingLineMinimumQuantity[]"]')?.value || 0),
+      maximumQuantity: row.querySelector('[name="loadingLineMaximumQuantity[]"]')?.value || "",
+      bufferPercentage: Number(row.querySelector('[name="loadingLineBufferPercentage[]"]')?.value || 0),
+      roundingMethod: row.querySelector('[name="loadingLineRoundingMethod[]"]')?.value || "ceil",
+      displaySequence: Number(row.querySelector('[name="loadingLineSequence[]"]')?.value || index + 1),
+      remarks: row.querySelector('[name="loadingLineRemarks[]"]')?.value || ""
+    };
+  }).filter((line) => line.menuLineId);
+}
+
+function splitList(value) {
+  return String(value || "").split(",").map((item) => item.trim()).filter(Boolean);
 }
 
 function emptyFlightMaster() {
@@ -3471,7 +3980,7 @@ function emptyMenuMaster() {
     effectiveFrom: "2026-06-15",
     effectiveTo: "2026-12-31",
     status: "Active",
-    lines: [makeMenuLine("ITEM-001", "New Menu Item", "Main Course", "Hot Breakfast", "Other", "Pax", 0, 1)]
+    lines: []
   });
 }
 
@@ -3513,25 +4022,7 @@ function emptyLoadingSheet() {
     rotation: "",
     notes: "",
     status: "Active",
-    lines: (menu?.lines || []).slice(0, 3).map((line, index) => ({
-      id: generateId("lsln", index),
-      menuLineId: line.id,
-      menuItemCode: line.itemCode,
-      menuItemName: line.itemName,
-      category: line.category,
-      unit: line.unit,
-      cabinClass: "All",
-      ratioType: "one_to_one",
-      ratioValue: "1:1",
-      fixedQuantity: 0,
-      quantityPerPassenger: 1,
-      minimumQuantity: 0,
-      maximumQuantity: "",
-      bufferPercentage: 0,
-      roundingMethod: "ceil",
-      displaySequence: index + 1,
-      remarks: ""
-    }))
+    lines: []
   });
 }
 
@@ -4882,8 +5373,8 @@ function invoiceTable(items) {
 
 function renderLoadingMaintenance() {
   const chart = state.loadingChart;
-  const returnScreen = state.loadingMaintenanceReturn === "menu-master" ? "menu-master" : "loading-sheet-master";
-  const returnLabel = returnScreen === "menu-master" ? "Back to Menu Master" : "Back to Loading Sheet Master";
+  const returnScreen = "loading-sheet-master";
+  const returnLabel = "Back to Loading Sheet Master";
   const body = `
     <section class="content">
       <div class="toolbar">
@@ -4928,8 +5419,30 @@ function loadingRows() {
 }
 
 function ratioTable() {
-  const ratioTypes = ["1 : 1 (Per Pax)", "J (Business)", "W (Premium Economy)", "Y (Economy)", "Crew"];
-  return `<div class="table-wrap"><table class="ratio-table"><thead><tr><th>Seq. No.</th><th>Service Seq.</th><th>Service Type</th><th>Dish Code</th><th>Dish Name</th><th>Unit</th><th>Ratio Type</th><th>Ratio Value</th><th>Min Pax</th><th>Max Pax</th><th>Remarks</th><th>Actions</th></tr></thead><tbody>${loadingRows().map((row, i) => `<tr><td>${i + 1}</td><td>1</td><td>${state.loadingChart.mealType}</td><td><input class="input cell-input" value="${escapeHtml(row.code)}" onchange="updateLoadingRow(${i}, 'code', this.value)"></td><td><input class="input cell-input dish-input" value="${escapeHtml(row.name)}" title="${escapeHtml(row.name)}" onchange="updateLoadingRow(${i}, 'name', this.value)"></td><td><input class="input cell-input" value="${escapeHtml(row.unit)}" onchange="updateLoadingRow(${i}, 'unit', this.value)"></td><td><select class="select cell-input" onchange="updateLoadingRow(${i}, 'ratioType', this.value)">${ratioTypes.map((type) => `<option ${type === row.ratioType ? "selected" : ""}>${type}</option>`).join("")}</select></td><td><input class="input cell-input" value="${escapeHtml(row.ratioValue)}" onchange="updateLoadingRow(${i}, 'ratioValue', this.value)"></td><td>1</td><td>9999</td><td class="cell-wrap">${escapeHtml(row.remarks)}</td><td><button type="button" class="btn icon-btn" onclick="deleteLoadingRow(${i})" title="Delete row" aria-label="Delete loading row ${i + 1}">DL</button></td></tr>`).join("")}</tbody></table></div>`;
+  const loadingSheet = getLoadingSheetById(state.selectedLoadingSheetId);
+  const menu = getMenuById(loadingSheet?.menuId);
+  const rows = loadingSheet?.lines || [];
+  return `<div class="table-wrap"><table class="ratio-table"><thead><tr><th>Seq</th><th>Service Seq</th><th>Service Type</th><th>Menu Item</th><th>Dish Code</th><th>Dish Name</th><th>Category</th><th>Unit</th><th>Cabin Class</th><th>Ratio Type</th><th>Ratio Value</th><th>Fixed</th><th>Per Pax</th><th>Min</th><th>Max</th><th>Buffer %</th><th>Rounding</th><th>Remarks</th><th>Actions</th></tr></thead><tbody>${rows.map((line, i) => `<tr>
+    <td><input class="input cell-input" type="number" value="${Number(line.displaySequence || i + 1)}" onchange="updateLoadingRow(${i}, 'displaySequence', this.value)"></td>
+    <td>${escapeHtml(loadingSheet?.serviceSequence || "1")}</td>
+    <td>${escapeHtml(loadingSheet?.mealType || state.loadingChart.mealType)}</td>
+    <td><select class="select cell-input dish-select" onchange="updateLoadingRow(${i}, 'menuLineId', this.value)">${menuLineOptions(menu, line.menuLineId)}</select></td>
+    <td>${escapeHtml(line.menuItemCode)}</td>
+    <td class="cell-wrap">${escapeHtml(line.menuItemName)}</td>
+    <td>${escapeHtml(line.category)}</td>
+    <td>${escapeHtml(line.unit)}</td>
+    <td><select class="select cell-input" onchange="updateLoadingRow(${i}, 'cabinClass', this.value)">${["All", "Business", "Premium Economy", "Economy", "Crew"].map((value) => `<option value="${escapeHtml(value)}" ${value === line.cabinClass ? "selected" : ""}>${escapeHtml(value)}</option>`).join("")}</select></td>
+    <td><select class="select cell-input" onchange="updateLoadingRow(${i}, 'ratioType', this.value)">${loadingRatioOptions().map((type) => `<option value="${escapeHtml(type.value)}" ${type.value === line.ratioType ? "selected" : ""}>${escapeHtml(type.label)}</option>`).join("")}</select></td>
+    <td><input class="input cell-input" value="${escapeHtml(line.ratioValue || "")}" onchange="updateLoadingRow(${i}, 'ratioValue', this.value)"></td>
+    <td><input class="input cell-input" type="number" value="${Number(line.fixedQuantity || 0)}" onchange="updateLoadingRow(${i}, 'fixedQuantity', this.value)"></td>
+    <td><input class="input cell-input" type="number" value="${Number(line.quantityPerPassenger || 0)}" onchange="updateLoadingRow(${i}, 'quantityPerPassenger', this.value)"></td>
+    <td><input class="input cell-input" type="number" value="${Number(line.minimumQuantity || 0)}" onchange="updateLoadingRow(${i}, 'minimumQuantity', this.value)"></td>
+    <td><input class="input cell-input" type="number" value="${escapeHtml(line.maximumQuantity ?? "")}" onchange="updateLoadingRow(${i}, 'maximumQuantity', this.value)"></td>
+    <td><input class="input cell-input" type="number" value="${Number(line.bufferPercentage || 0)}" onchange="updateLoadingRow(${i}, 'bufferPercentage', this.value)"></td>
+    <td><select class="select cell-input" onchange="updateLoadingRow(${i}, 'roundingMethod', this.value)">${roundingOptions().map((option) => `<option value="${escapeHtml(option.value)}" ${option.value === line.roundingMethod ? "selected" : ""}>${escapeHtml(option.label)}</option>`).join("")}</select></td>
+    <td><input class="input cell-input" value="${escapeHtml(line.remarks || "")}" onchange="updateLoadingRow(${i}, 'remarks', this.value)"></td>
+    <td><button type="button" class="btn icon-btn" onclick="deleteLoadingRow(${i})" title="Delete loading row" aria-label="Delete loading row ${i + 1}">DL</button></td>
+  </tr>`).join("") || `<tr><td colspan="19" class="empty-state">No loading lines configured. Import active items from the linked Menu Master.</td></tr>`}</tbody></table></div>`;
 }
 
 function renderLoadingPreview() {

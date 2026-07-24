@@ -2254,7 +2254,7 @@ function openInfoModal(title, rows) {
   document.body.insertAdjacentHTML("beforeend", `
     <div class="modal-backdrop" onclick="closeModal(event)">
       <div class="modal" role="dialog" aria-modal="true">
-        <div class="modal-head"><h2 style="margin:0">${escapeHtml(title)}</h2><button class="btn icon-btn" onclick="closeModal()">×</button></div>
+        <div class="modal-head"><h2 style="margin:0">${escapeHtml(title)}</h2><button type="button" class="btn icon-btn" onclick="closeModal()" aria-label="Close dialog" title="Close">×</button></div>
         <div class="modal-body">
           <div class="chart-header">
             ${rows.map(([label, value]) => `<div class="mini-card"><span class="muted">${escapeHtml(label)}</span><br><b>${value}</b></div>`).join("")}
@@ -2428,17 +2428,20 @@ function renderMenuMaster() {
   const body = `
     <section class="content menu-master-content">
       <div class="toolbar master-toolbar menu-master-toolbar">
-        <button class="btn" onclick="showMenuMasterTable()">Back to Table</button>
-        <select class="field menu-master-select" onchange="state.selectedMenuId=this.value;saveState();render()">
-          ${menus.map((menu) => `<option value="${escapeHtml(menu.id)}" ${menu.id === selectedMenu.id ? "selected" : ""}>${escapeHtml(menu.menuCode)} - ${escapeHtml(menu.menuName)}</option>`).join("")}
-        </select>
-        <span class="badge ${selectedMenu.status.toLowerCase()}">${escapeHtml(selectedMenu.status)}</span>
-        <span style="flex:1"></span>
-        <button class="btn green" onclick="openMasterModal('menus')">Add Menu</button>
-        <button class="btn" onclick="openMasterModal('menus','${selectedMenu.id}','view')">Record Details</button>
-        <button class="btn green" onclick="openMenuMasterLoadingEdit('${selectedMenu.id}')">Edit Menu</button>
-        <button class="btn" onclick="cloneMasterRecord('menus','${selectedMenu.id}')">Clone Menu</button>
-        <button class="btn" onclick="window.print()">Print</button>
+        <div class="toolbar-group toolbar-group--start">
+          <button type="button" class="btn" onclick="showMenuMasterTable()">Back to Table</button>
+          <select class="field menu-master-select" onchange="state.selectedMenuId=this.value;saveState();render()">
+            ${menus.map((menu) => `<option value="${escapeHtml(menu.id)}" ${menu.id === selectedMenu.id ? "selected" : ""}>${escapeHtml(menu.menuCode)} - ${escapeHtml(menu.menuName)}</option>`).join("")}
+          </select>
+          <span class="badge ${selectedMenu.status.toLowerCase()}">${escapeHtml(selectedMenu.status)}</span>
+        </div>
+        <div class="toolbar-group toolbar-group--end">
+          <button type="button" class="btn green" onclick="openMasterModal('menus')">Add Menu</button>
+          <button type="button" class="btn" onclick="openMasterModal('menus','${selectedMenu.id}','view')">Record Details</button>
+          <button type="button" class="btn green" onclick="openMenuMasterLoadingEdit('${selectedMenu.id}')">Edit Menu</button>
+          <button type="button" class="btn" onclick="cloneMasterRecord('menus','${selectedMenu.id}')">Clone Menu</button>
+          <button type="button" class="btn" onclick="window.print()">Print</button>
+        </div>
       </div>
       ${menuMasterReferenceDocument(selectedMenu, loadingSheet, flight, mapping)}
       <div class="footer-note">Menu Master preview is linked to Flight Master, Flight-Menu Mapping, and Loading Sheet Master so operations see the same menu, effective period, ratios, and calculated quantity matrix.</div>
@@ -2714,9 +2717,12 @@ function renderAuditTrail() {
   const body = `
     <section class="content">
       <div class="toolbar">
-        <input class="search" placeholder="Search audit..." oninput="filterAuditRows(this.value)">
-        <span style="flex:1"></span>
-        <button class="btn icon-btn" onclick="resetDemo()" title="Reset demo data">RS</button>
+        <div class="toolbar-group toolbar-group--start">
+          <input class="search" placeholder="Search audit..." oninput="filterAuditRows(this.value)">
+        </div>
+        <div class="toolbar-group toolbar-group--end">
+          <button type="button" class="btn icon-btn" onclick="resetDemo()" title="Reset demo data" aria-label="Reset demo data">RS</button>
+        </div>
       </div>
       <div class="table-wrap">
         <table id="audit-table">
@@ -2740,25 +2746,26 @@ function masterConfigs() {
   return {
     flights: {
       key: "flights",
+      tableClass: "master-table master-table--flights",
       screen: "flight-master",
       title: "Flight Master",
       subtitle: "Configure airline flight definitions, routes, schedules, capacity, and operational defaults",
       addLabel: "Add Flight",
       idField: "selectedFlightMasterId",
       columns: [
-        ["Flight code", (row) => row.flightCode],
-        ["Airline", (row) => row.airline],
-        ["Flight number", (row) => row.flightNumber],
-        ["Origin", (row) => row.origin],
-        ["Destination", (row) => row.destination],
-        ["Sector", (row) => row.sector],
-        ["Days", (row) => row.operatingDays.join(", ")],
-        ["STD", (row) => row.scheduledDeparture],
-        ["STA", (row) => row.scheduledArrival],
-        ["Aircraft", (row) => row.aircraftType],
-        ["Capacity", (row) => row.totalPassengerCapacity, "num"],
-        ["Effective", (row) => `${row.effectiveFrom} to ${row.effectiveTo}`],
-        ["Status", (row) => badge(row.status)]
+        ["Flight code", (row) => row.flightCode, "cell-code"],
+        ["Airline", (row) => row.airline, "cell-name"],
+        ["Flight number", (row) => row.flightNumber, "cell-code"],
+        ["Origin", (row) => row.origin, "cell-sector"],
+        ["Destination", (row) => row.destination, "cell-sector"],
+        ["Sector", (row) => row.sector, "cell-code"],
+        ["Days", (row) => row.operatingDays.join(", "), "cell-wrap"],
+        ["STD", (row) => row.scheduledDeparture, "cell-code"],
+        ["STA", (row) => row.scheduledArrival, "cell-code"],
+        ["Aircraft", (row) => row.aircraftType, "cell-nowrap"],
+        ["Capacity", (row) => row.totalPassengerCapacity, "num cell-num"],
+        ["Effective", (row) => `${row.effectiveFrom} to ${row.effectiveTo}`, "cell-date"],
+        ["Status", (row) => badge(row.status), "cell-status"]
       ],
       fields: flightMasterFields,
       create: emptyFlightMaster,
@@ -2774,22 +2781,23 @@ function masterConfigs() {
     },
     menus: {
       key: "menus",
+      tableClass: "master-table master-table--menus",
       screen: "menu-master",
       title: "Menu Master",
       subtitle: "Maintain menu headers, menu line items, pricing, tax, and invoice item codes",
       addLabel: "Add Menu",
       idField: "selectedMenuId",
       columns: [
-        ["Menu code", (row) => row.menuCode],
-        ["Menu name", (row) => row.menuName],
-        ["Cycle", (row) => row.menuCycle],
-        ["Service type", (row) => row.serviceType],
-        ["Meal category", (row) => row.lines[0]?.category || "-"],
-        ["Currency", (row) => row.currency],
-        ["Items", (row) => row.lines.length, "num"],
-        ["Effective", (row) => `${row.effectiveFrom} to ${row.effectiveTo}`],
-        ["Version", (row) => row.version],
-        ["Status", (row) => badge(row.status)]
+        ["Menu code", (row) => row.menuCode, "cell-code"],
+        ["Menu name", (row) => row.menuName, "cell-name"],
+        ["Cycle", (row) => row.menuCycle, "cell-nowrap"],
+        ["Service type", (row) => row.serviceType, "cell-nowrap"],
+        ["Meal category", (row) => row.lines[0]?.category || "-", "cell-wrap"],
+        ["Currency", (row) => row.currency, "cell-nowrap"],
+        ["Items", (row) => row.lines.length, "num cell-num"],
+        ["Effective", (row) => `${row.effectiveFrom} to ${row.effectiveTo}`, "cell-date"],
+        ["Version", (row) => row.version, "cell-code"],
+        ["Status", (row) => badge(row.status), "cell-status"]
       ],
       fields: menuMasterFields,
       create: emptyMenuMaster,
@@ -2798,22 +2806,23 @@ function masterConfigs() {
     },
     mappings: {
       key: "flightMenuMappings",
+      tableClass: "master-table master-table--mappings",
       screen: "flight-menu-mapping",
       title: "Flight–Menu Mapping",
       subtitle: "Map active flights and sectors to menu cycles for operations and billing",
       addLabel: "Add Mapping",
       idField: "selectedMappingId",
       columns: [
-        ["Mapping code", (row) => row.mappingCode],
-        ["Airline", (row) => getFlightMasterById(row.flightMasterId)?.airline || "-"],
-        ["Flight number", (row) => getFlightMasterById(row.flightMasterId)?.flightNumber || "-"],
-        ["Sector", (row) => getFlightMasterById(row.flightMasterId)?.sector || "-"],
-        ["Menu code", (row) => getMenuById(row.menuId)?.menuCode || "-"],
-        ["Menu name", (row) => getMenuById(row.menuId)?.menuName || "-"],
-        ["Service type", (row) => row.serviceType],
-        ["Effective", (row) => `${row.effectiveFrom} to ${row.effectiveTo}`],
-        ["Priority", (row) => row.priority, "num"],
-        ["Status", (row) => badge(row.status)]
+        ["Mapping code", (row) => row.mappingCode, "cell-code"],
+        ["Airline", (row) => getFlightMasterById(row.flightMasterId)?.airline || "-", "cell-name"],
+        ["Flight number", (row) => getFlightMasterById(row.flightMasterId)?.flightNumber || "-", "cell-code"],
+        ["Sector", (row) => getFlightMasterById(row.flightMasterId)?.sector || "-", "cell-code"],
+        ["Menu code", (row) => getMenuById(row.menuId)?.menuCode || "-", "cell-code"],
+        ["Menu name", (row) => getMenuById(row.menuId)?.menuName || "-", "cell-name"],
+        ["Service type", (row) => row.serviceType, "cell-nowrap"],
+        ["Effective", (row) => `${row.effectiveFrom} to ${row.effectiveTo}`, "cell-date"],
+        ["Priority", (row) => row.priority, "num cell-num"],
+        ["Status", (row) => badge(row.status), "cell-status"]
       ],
       fields: mappingFields,
       create: emptyMapping,
@@ -2828,21 +2837,22 @@ function masterConfigs() {
     },
     ancillaries: {
       key: "ancillaryItems",
+      tableClass: "master-table master-table--ancillaries",
       screen: "ancillary-master",
       title: "Ancillary Item Master",
       subtitle: "Configure billable and operational ancillary items with calculation rules",
       addLabel: "Add Ancillary",
       idField: "selectedAncillaryId",
       columns: [
-        ["Item code", (row) => row.itemCode],
-        ["Item name", (row) => row.itemName],
-        ["Category", (row) => row.category],
-        ["Unit", (row) => row.unit],
-        ["Rule", (row) => ruleLabel(row.calculationRule)],
-        ["Rate", (row) => Number(row.unitRate).toFixed(2), "num"],
-        ["Currency", (row) => row.currency],
-        ["Invoice", (row) => row.invoiceEnabled ? "Yes" : "No"],
-        ["Status", (row) => badge(row.status)]
+        ["Item code", (row) => row.itemCode, "cell-code"],
+        ["Item name", (row) => row.itemName, "cell-name"],
+        ["Category", (row) => row.category, "cell-nowrap"],
+        ["Unit", (row) => row.unit, "cell-nowrap"],
+        ["Rule", (row) => ruleLabel(row.calculationRule), "cell-rule"],
+        ["Rate", (row) => Number(row.unitRate).toFixed(2), "num cell-num"],
+        ["Currency", (row) => row.currency, "cell-nowrap"],
+        ["Invoice", (row) => row.invoiceEnabled ? "Yes" : "No", "cell-status"],
+        ["Status", (row) => badge(row.status), "cell-status"]
       ],
       fields: ancillaryFields,
       create: emptyAncillary,
@@ -2851,29 +2861,30 @@ function masterConfigs() {
     },
     loadingSheets: {
       key: "loadingSheets",
+      tableClass: "master-table master-table--loading-sheets",
       screen: "loading-sheet-master",
       title: "Loading Sheet Master",
       subtitle: "Reusable loading sheet versions linked to flight, menu, aircraft, and menu line items",
       addLabel: "Add Loading Sheet",
       idField: "selectedLoadingSheetId",
       columns: [
-        ["Loading Sheet code", (row) => row.loadingSheetCode],
-        ["Version", (row) => row.version],
-        ["Airline", (row) => getFlightMasterById(row.flightMasterId)?.airline || "-"],
-        ["Flight number", (row) => getFlightMasterById(row.flightMasterId)?.flightNumber || "-"],
-        ["Sector", (row) => getFlightMasterById(row.flightMasterId)?.sector || "-"],
-        ["Aircraft", (row) => row.aircraftType],
-        ["Menu", (row) => getMenuById(row.menuId)?.menuCode || "-"],
-        ["Meal type", (row) => row.mealType],
-        ["Effective", (row) => `${row.effectiveFrom} to ${row.effectiveTo}`],
-        ["Lines", (row) => row.lines.length, "num"],
-        ["Status", (row) => badge(row.status)]
+        ["Loading Sheet code", (row) => row.loadingSheetCode, "cell-code"],
+        ["Version", (row) => row.version, "cell-code"],
+        ["Airline", (row) => getFlightMasterById(row.flightMasterId)?.airline || "-", "cell-name"],
+        ["Flight number", (row) => getFlightMasterById(row.flightMasterId)?.flightNumber || "-", "cell-code"],
+        ["Sector", (row) => getFlightMasterById(row.flightMasterId)?.sector || "-", "cell-code"],
+        ["Aircraft", (row) => row.aircraftType, "cell-nowrap"],
+        ["Menu", (row) => getMenuById(row.menuId)?.menuCode || "-", "cell-code"],
+        ["Meal type", (row) => row.mealType, "cell-nowrap"],
+        ["Effective", (row) => `${row.effectiveFrom} to ${row.effectiveTo}`, "cell-date"],
+        ["Lines", (row) => row.lines.length, "num cell-num"],
+        ["Status", (row) => badge(row.status), "cell-status"]
       ],
       fields: loadingSheetFields,
       create: emptyLoadingSheet,
       validate: validateLoadingSheet,
       search: (row) => `${row.loadingSheetCode} ${getFlightMasterById(row.flightMasterId)?.airline || ""} ${getFlightMasterById(row.flightMasterId)?.flightNumber || ""} ${getMenuById(row.menuId)?.menuCode || ""} ${row.mealType}`,
-      extraActions: (row) => `<button class="btn" onclick="openLoadingMaintenance('${row.id}')">Maintenance</button><button class="btn" onclick="previewLoadingSheet('${row.id}')">Preview Matrix</button><button class="btn" onclick="cloneMasterRecord('loadingSheets','${row.id}')">Clone Version</button>`
+      extraActions: (row) => `<button type="button" class="btn" onclick="openLoadingMaintenance('${row.id}')">Maintenance</button><button type="button" class="btn" onclick="previewLoadingSheet('${row.id}')">Preview Matrix</button><button type="button" class="btn" onclick="cloneMasterRecord('loadingSheets','${row.id}')">Clone Version</button>`
     }
   };
 }
@@ -2891,16 +2902,19 @@ function renderMasterScreen(config) {
         ${kpi("IN", "Inactive", rows.length - activeCount, "Retained for history", "amber")}
         ${kpi("VA", "Validation Flags", warnings, "Current saved records", warnings ? "red" : "green")}
       </div>
-      <div class="toolbar master-toolbar">
-        <input class="search" value="${escapeHtml(masterFilter(config.screen, "search"))}" placeholder="Search..." oninput="setMasterFilter('${config.screen}', 'search', this.value)">
-        ${renderMasterFilters(config, rows)}
-        <span style="flex:1"></span>
-        <button class="btn green" onclick="openMasterModal('${config.key}')">${config.addLabel}</button>
-        <button class="btn icon-btn" onclick="resetDemo()" title="Reset demo data">RS</button>
+      <div class="toolbar toolbar--master master-toolbar ${config.filters?.length ? "toolbar--master-filtered" : "toolbar--master-simple"}">
+        <div class="toolbar-group toolbar-group--start">
+          <input class="search" value="${escapeHtml(masterFilter(config.screen, "search"))}" placeholder="Search..." oninput="setMasterFilter('${config.screen}', 'search', this.value)">
+          ${renderMasterFilters(config, rows)}
+        </div>
+        <div class="toolbar-group toolbar-group--end">
+          <button type="button" class="btn green" onclick="openMasterModal('${config.key}')">${config.addLabel}</button>
+          <button type="button" class="btn icon-btn" onclick="resetDemo()" title="Reset demo data" aria-label="Reset demo data">RS</button>
+        </div>
       </div>
       <div class="table-wrap master-table-wrap">
-        <table>
-          <thead><tr>${config.columns.map(([label]) => `<th>${label}</th>`).join("")}<th>Actions</th></tr></thead>
+        <table class="data-table ${config.tableClass || `master-table--${config.key}`}">
+          <thead><tr>${config.columns.map(([label, getter, className]) => `<th class="${className || ""}">${label}</th>`).join("")}<th class="cell-actions">Actions</th></tr></thead>
           <tbody>
             ${filteredRows.map((row) => masterTableRow(config, row)).join("") || `<tr><td colspan="${config.columns.length + 1}" class="empty-state">No master records match the current filters.</td></tr>`}
           </tbody>
@@ -2921,19 +2935,25 @@ function masterTableRow(config, row) {
   const editHandler = config.key === "menus" ? `openMenuMasterLoadingEdit('${row.id}')` : `openMasterModal('${config.key}','${row.id}','edit')`;
   return `
     <tr>
-      ${config.columns.map(([label, getter, className]) => `<td class="${className || ""}">${getter(row)}</td>`).join("")}
-      <td>
+      ${config.columns.map(([label, getter, className]) => masterTableCell(getter(row), className)).join("")}
+      <td class="cell-actions">
         <div class="row-actions">
-          <button class="btn" onclick="${viewHandler}">View</button>
-          <button class="btn green" onclick="${editHandler}">Edit</button>
-          ${config.key === "menus" ? `<button class="btn" onclick="cloneMasterRecord('${config.key}','${row.id}')">Clone Menu</button>` : ""}
+          <button type="button" class="btn" onclick="${viewHandler}">View</button>
+          <button type="button" class="btn green" onclick="${editHandler}">Edit</button>
+          ${config.key === "menus" ? `<button type="button" class="btn" onclick="cloneMasterRecord('${config.key}','${row.id}')">Clone Menu</button>` : ""}
           ${config.extraActions ? config.extraActions(row) : ""}
-          <button class="btn" onclick="toggleMasterStatus('${config.key}','${row.id}')">${row.status === "Active" ? "Deactivate" : "Activate"}</button>
-          <button class="btn danger" onclick="requestDeleteMaster('${config.key}','${row.id}')">Delete</button>
+          <button type="button" class="btn" onclick="toggleMasterStatus('${config.key}','${row.id}')">${row.status === "Active" ? "Deactivate" : "Activate"}</button>
+          <button type="button" class="btn danger" onclick="requestDeleteMaster('${config.key}','${row.id}')">Delete</button>
         </div>
       </td>
     </tr>
   `;
+}
+
+function masterTableCell(value, className = "") {
+  const text = String(value ?? "");
+  const title = /<[^>]+>/.test(text) ? "" : ` title="${escapeHtml(text)}"`;
+  return `<td class="${className || ""}"${title}>${text}</td>`;
 }
 
 function renderMasterFilters(config, rows) {
@@ -2993,7 +3013,7 @@ function openMasterModal(key, id = "", mode = "edit") {
   document.body.insertAdjacentHTML("beforeend", `
     <div class="modal-backdrop" onclick="closeModal(event)">
       <div class="modal wide-modal" role="dialog" aria-modal="true">
-        <div class="modal-head"><h2 style="margin:0">${readonly ? "View" : existing ? "Edit" : "Add"} ${config.title}</h2><button class="btn icon-btn" onclick="closeModal()">×</button></div>
+        <div class="modal-head"><h2 style="margin:0">${readonly ? "View" : existing ? "Edit" : "Add"} ${config.title}</h2><button type="button" class="btn icon-btn" onclick="closeModal()" aria-label="Close dialog" title="Close">×</button></div>
         <form id="master-form" onsubmit="saveMasterForm(event, '${key}', '${id}')">
           <div class="modal-body">
             ${config.fields(record, readonly)}
@@ -3065,7 +3085,7 @@ function openConfirmModal(title, message, confirmHandler) {
   document.body.insertAdjacentHTML("beforeend", `
     <div class="modal-backdrop" onclick="closeModal(event)">
       <div class="modal" role="dialog" aria-modal="true">
-        <div class="modal-head"><h2 style="margin:0">${escapeHtml(title)}</h2><button class="btn icon-btn" onclick="closeModal()">×</button></div>
+        <div class="modal-head"><h2 style="margin:0">${escapeHtml(title)}</h2><button type="button" class="btn icon-btn" onclick="closeModal()" aria-label="Close dialog" title="Close">×</button></div>
         <div class="modal-body"><div class="notice"><span class="check">${confirmHandler ? "!" : "✓"}</span><div>${escapeHtml(message)}</div></div></div>
         <div class="modal-foot"><span class="muted">${confirmHandler ? "Hard delete is allowed only when no references exist." : "Deactivate this record instead if operations still reference it."}</span><button class="btn" onclick="closeModal()">Close</button>${confirmHandler ? `<button class="btn danger" onclick="${confirmHandler};closeModal()">Delete</button>` : ""}</div>
       </div>
@@ -3672,12 +3692,15 @@ function renderPlanning() {
   const body = `
     <section class="content">
       <div class="toolbar">
-        <select class="field" onchange="state.selectedFlight=this.value;saveState();render()">${state.flights.map((item) => `<option value="${item.flightNo}" ${item.flightNo === flight.flightNo ? "selected" : ""}>${item.airline} - ${item.flightNo}</option>`).join("")}</select>
-        <button class="btn green" onclick="savePlanningSetup()">Load Chart Into Planning</button>
-        <button class="btn" onclick="setScreen('kot')">Open KOT</button>
-        <button class="btn" onclick="setScreen('loading-preview')">Preview Matrix</button>
-        <span style="flex:1"></span>
-        <span class="badge confirmed">${flight.planningStatus}</span>
+        <div class="toolbar-group toolbar-group--start">
+          <select class="field" onchange="state.selectedFlight=this.value;saveState();render()">${state.flights.map((item) => `<option value="${item.flightNo}" ${item.flightNo === flight.flightNo ? "selected" : ""}>${item.airline} - ${item.flightNo}</option>`).join("")}</select>
+        </div>
+        <div class="toolbar-group toolbar-group--end">
+          <button type="button" class="btn green" onclick="savePlanningSetup()">Load Chart Into Planning</button>
+          <button type="button" class="btn" onclick="setScreen('kot')">Open KOT</button>
+          <button type="button" class="btn" onclick="setScreen('loading-preview')">Preview Matrix</button>
+          <span class="badge confirmed">${flight.planningStatus}</span>
+        </div>
       </div>
       <div class="planning-document">
         <div class="planning-doc-top">
@@ -3902,22 +3925,26 @@ function renderQueue() {
         ${kpi("ND", "Next Dispatch", nextDispatch, operations[0]?.flightNo || "-")}
         ${kpi("EX", "Config Warnings", totals.flights - totals.ready, "Blocks confirmation", totals.ready === totals.flights ? "green" : "red")}
       </div>
-      <div class="toolbar">
-        <input class="field" type="date" value="${escapeHtml(state.operatingDate)}" aria-label="Operating date" onchange="setOperatingDate(this.value)">
-        <select class="field" onchange="setQueueFilter('configStatus', this.value)">${["All Config", "Ready", "Missing Menu Mapping", "Missing Menu", "Missing Loading Sheet", "Missing Pricing", "Invalid Ratios", "Inactive Master"].map((item) => `<option ${filters.configStatus === item ? "selected" : ""}>${item}</option>`).join("")}</select>
-        <select class="field" onchange="setQueueFilter('status', this.value)">${["All Status", "Draft", "Calculated", "Confirmed", "Sent to Kitchen", "In Progress", "Prepared", "Approved", "Dispatched", "Pending"].map((item) => `<option ${filters.status === item ? "selected" : ""}>${item}</option>`).join("")}</select>
-        <select class="field" onchange="setQueueFilter('airline', this.value)">${["All Airlines", ...new Set(operations.map((flight) => flight.airline))].map((item) => `<option ${filters.airline === item ? "selected" : ""}>${item}</option>`).join("")}</select>
-        <select class="field" onchange="setQueueFilter('sector', this.value)">${["All Sectors", ...new Set(operations.map((flight) => flight.sector))].map((item) => `<option ${filters.sector === item ? "selected" : ""}>${item}</option>`).join("")}</select>
-        <input class="search" value="${escapeHtml(filters.search)}" placeholder="Search flight no, airline, sector..." oninput="state.queueFilters.search=this.value;saveState();filterRows(this.value)">
-        <button class="btn" onclick="generateDailyOperations(state.operatingDate);saveState();render()">Generate / Refresh</button>
-        <button class="btn icon-btn" onclick="resetDemo()" title="Reset local demo data">RS</button>
+      <div class="toolbar toolbar--queue">
+        <div class="toolbar-group toolbar-group--start">
+          <input class="field" type="date" value="${escapeHtml(state.operatingDate)}" aria-label="Operating date" onchange="setOperatingDate(this.value)">
+          <select class="field" onchange="setQueueFilter('configStatus', this.value)">${["All Config", "Ready", "Missing Menu Mapping", "Missing Menu", "Missing Loading Sheet", "Missing Pricing", "Invalid Ratios", "Inactive Master"].map((item) => `<option ${filters.configStatus === item ? "selected" : ""}>${item}</option>`).join("")}</select>
+          <select class="field" onchange="setQueueFilter('status', this.value)">${["All Status", "Draft", "Calculated", "Confirmed", "Sent to Kitchen", "In Progress", "Prepared", "Approved", "Dispatched", "Pending"].map((item) => `<option ${filters.status === item ? "selected" : ""}>${item}</option>`).join("")}</select>
+          <select class="field" onchange="setQueueFilter('airline', this.value)">${["All Airlines", ...new Set(operations.map((flight) => flight.airline))].map((item) => `<option ${filters.airline === item ? "selected" : ""}>${item}</option>`).join("")}</select>
+          <select class="field" onchange="setQueueFilter('sector', this.value)">${["All Sectors", ...new Set(operations.map((flight) => flight.sector))].map((item) => `<option ${filters.sector === item ? "selected" : ""}>${item}</option>`).join("")}</select>
+          <input class="search" value="${escapeHtml(filters.search)}" placeholder="Search flight no, airline, sector..." oninput="state.queueFilters.search=this.value;saveState();filterRows(this.value)">
+        </div>
+        <div class="toolbar-group toolbar-group--end">
+          <button type="button" class="btn" onclick="generateDailyOperations(state.operatingDate);saveState();render()">Generate / Refresh</button>
+          <button type="button" class="btn icon-btn" onclick="resetDemo()" title="Reset local demo data" aria-label="Reset local demo data">RS</button>
+        </div>
       </div>
       <div class="table-wrap">
-        <table id="flight-table">
+        <table id="flight-table" class="data-table data-table--queue">
           <thead>
             <tr>
-              <th>STD</th><th>Flight No.</th><th>Airline</th><th>Sector</th><th>Aircraft</th>
-              <th>Capacity</th><th class="num">Confirmed</th><th class="num">Special</th><th class="num">Final</th><th>Assigned Menu</th><th>Loading Sheet</th><th>KOT Status</th><th>Kitchen</th><th>Dispatch</th><th>Configuration</th><th>Action</th>
+              <th class="cell-code">STD</th><th class="cell-code">Flight No.</th><th class="cell-name">Airline</th><th class="cell-code">Sector</th><th>Aircraft</th>
+              <th class="num cell-num">Capacity</th><th class="num cell-num">Confirmed</th><th class="num cell-num">Special</th><th class="num cell-num">Final</th><th class="cell-code">Assigned Menu</th><th class="cell-code">Loading Sheet</th><th class="cell-status">KOT Status</th><th class="cell-status">Kitchen</th><th class="cell-status">Dispatch</th><th class="cell-status">Configuration</th><th class="cell-actions">Action</th>
             </tr>
           </thead>
           <tbody>
@@ -3933,8 +3960,8 @@ function renderQueue() {
 }
 
 function kpi(icon, label, value, sub, tone = "blue") {
-  const color = tone === "green" ? "#159447" : tone === "amber" ? "#e28b16" : tone === "red" ? "#b91c1c" : tone === "purple" ? "#7633bd" : "#0b66bf";
-  return `<div class="kpi"><div class="kpi-icon" style="color:${color}">${icon}</div><div><small>${label}</small><strong style="color:${color}">${value}</strong><span>${sub}</span></div></div>`;
+  const safeTone = ["blue", "green", "amber", "red", "purple"].includes(tone) ? tone : "blue";
+  return `<div class="kpi kpi--${safeTone}"><div class="kpi-icon">${icon}</div><div><small>${label}</small><strong>${value}</strong><span>${sub}</span></div></div>`;
 }
 
 function queueRow(flight) {
@@ -3942,21 +3969,21 @@ function queueRow(flight) {
   return `
     <tr data-search="${`${flight.flightNo} ${flight.airline} ${flight.sector} ${flight.configurationStatus}`.toLowerCase()}">
       <td class="blue-text">${flight.std}</td>
-      <td><strong>${flight.flightNo}</strong></td>
-      <td><span class="logo-airline ${flight.airlineClass}">${flight.airline}</span></td>
-      <td>${flight.sector}</td>
+      <td class="cell-code"><strong>${flight.flightNo}</strong></td>
+      <td class="cell-name" title="${escapeHtml(flight.airline)}"><span class="logo-airline ${flight.airlineClass}">${flight.airline}</span></td>
+      <td class="cell-code">${flight.sector}</td>
       <td>${flight.aircraft}</td>
-      <td>${flight.capacity}</td>
-      <td class="num">${flight.confirmedPax}</td>
-      <td class="num">${specialMealTotal(flight)}</td>
-      <td class="num"><strong>${calc.finalPax}</strong></td>
-      <td>${flight.menuSnapshot?.menuCode || "-"}</td>
-      <td>${flight.loadingSheetSnapshot?.loadingSheetCode || "-"}</td>
-      <td>${badge(flight.kot)}</td>
-      <td>${badge(flight.kitchenStatus || flight.production)}</td>
-      <td>${badge(flight.dispatch)}</td>
-      <td>${badge(flight.configurationStatus)}</td>
-      <td><button class="btn green" onclick="setSelectedOperation('${flight.id}', 'kot')">${isKotLocked(flight) ? "View KOT" : "Open KOT"}</button> <button class="btn icon-btn" onclick="openFlightModal('${flight.id}')">...</button></td>
+      <td class="num cell-num">${flight.capacity}</td>
+      <td class="num cell-num">${flight.confirmedPax}</td>
+      <td class="num cell-num">${specialMealTotal(flight)}</td>
+      <td class="num cell-num"><strong>${calc.finalPax}</strong></td>
+      <td class="cell-code">${flight.menuSnapshot?.menuCode || "-"}</td>
+      <td class="cell-code" title="${escapeHtml(flight.loadingSheetSnapshot?.loadingSheetCode || "-")}">${flight.loadingSheetSnapshot?.loadingSheetCode || "-"}</td>
+      <td class="cell-status">${badge(flight.kot)}</td>
+      <td class="cell-status">${badge(flight.kitchenStatus || flight.production)}</td>
+      <td class="cell-status">${badge(flight.dispatch)}</td>
+      <td class="cell-status">${badge(flight.configurationStatus)}</td>
+      <td class="cell-actions"><div class="row-actions"><button type="button" class="btn green" onclick="setSelectedOperation('${flight.id}', 'kot')">${isKotLocked(flight) ? "View KOT" : "Open KOT"}</button><button type="button" class="btn icon-btn" onclick="openFlightModal('${flight.id}')" aria-label="Open flight details for ${escapeHtml(flight.flightNo)}" title="Open flight details">...</button></div></td>
     </tr>
   `;
 }
@@ -3974,21 +4001,23 @@ function renderKot() {
   const calc = calculatedKot(flight);
   const canRefresh = flight.flightSnapshot && !isKotLocked(flight);
   const body = `
-    <div class="flight-header">
-      <div><button class="btn" onclick="setScreen('queue')">Back to Flight List</button></div>
-      <div><strong>${flight.flightNo}</strong> ${badge(flight.kot)}</div>
-      <div><span class="logo-airline ${flight.airlineClass}">${flight.airline}</span></div>
-      <div><label>Sector</label><b>${flight.sector}</b></div>
-      <div><label>STD</label><b>${flight.std}</b></div>
-      <div><label>Aircraft</label><b>${flight.aircraft}</b></div>
-      <div><label>Reg. No.</label><b>${flight.reg}</b></div>
-      <div><label>Final Pax</label><b>${calc.finalPax}</b></div>
+    <div class="flight-header kot-flight-header">
+      <div class="flight-header-action"><button type="button" class="btn" onclick="setScreen('queue')">Back to Flight List</button></div>
+      <div class="flight-summary">
+        <div class="flight-identity"><strong>${flight.flightNo}</strong> ${badge(flight.kot)}</div>
+        <div><label>Airline</label><span class="logo-airline ${flight.airlineClass}">${flight.airline}</span></div>
+        <div><label>Sector</label><b>${flight.sector}</b></div>
+        <div><label>STD</label><b>${flight.std}</b></div>
+        <div><label>Aircraft</label><b>${flight.aircraft}</b></div>
+        <div><label>Reg. No.</label><b>${flight.reg}</b></div>
+        <div><label>Final Pax</label><b>${calc.finalPax}</b></div>
+      </div>
     </div>
-    <div class="steps">${KOT_STEPS.map((item, index) => `<button class="step ${index === step ? "active" : ""} ${index < step ? "complete" : ""}" onclick="setKotStep(${index})"><b>${index + 1}</b>${item}</button>`).join("")}</div>
-    <section class="content">
-      <div class="grid-2">
-        <div>${kotStageContent(step, flight)}</div>
-        <aside>
+    <div class="steps kot-steps">${KOT_STEPS.map((item, index) => `<button type="button" class="step ${index === step ? "active" : ""} ${index < step ? "complete" : ""}" onclick="setKotStep(${index})"><b>${index + 1}</b><span>${item}</span></button>`).join("")}</div>
+    <section class="content kot-content">
+      <div class="grid-2 kot-layout">
+        <div class="kot-main">${kotStageContent(step, flight)}</div>
+        <aside class="kot-aside">
           ${sidePanel("Configuration", [["Status", badge(flight.configurationStatus || "Ready")], ["Messages", (flight.configurationMessages || []).join("<br>") || "Ready"], ["Menu", flight.menuSnapshot?.menuCode || "-"], ["Loading Sheet", flight.loadingSheetSnapshot?.loadingSheetCode || "-"]])}
           ${sidePanel("Key Timings", [["Hot Meal Dish Out", flight.flightSnapshot?.hotMealDishOutTime || "13:15"], ["Cold Meal Prep.", flight.flightSnapshot?.coldMealPreparationTime || "13:00"], ["Dispatch Time", flight.flightSnapshot?.dispatchTime || "14:45"]])}
           ${sidePanel("Other Info", [["Loading Bay", flight.flightSnapshot?.loadingBay || "02"], ["Gate Type", flight.flightSnapshot?.gateType || "Wide Body"], ["Uplift Type", flight.flightSnapshot?.upliftType || "Full Uplift"], ["Prepared By", "operations1"], ["Prepared On", nowStamp()]])}
@@ -4034,7 +4063,7 @@ function kotStageContent(step, flight) {
           ${readonlyField("Loading Sheet Version", flight.loadingSheetSnapshot?.version || "-")}
           ${readonlyField("Service Type", flight.mappingSnapshot?.serviceType || flight.menuSnapshot?.serviceType || "-")}
         </div>
-        <div class="paper-grid three" style="margin-top:14px">
+        <div class="paper-grid three kot-related-panels">
           ${sidePanel("Flight Master", [["Effective", `${flight.flightSnapshot?.effectiveFrom || "-"} to ${flight.flightSnapshot?.effectiveTo || "-"}`], ["Capacity by class", `J ${flight.flightSnapshot?.businessCapacity || 0} / W ${flight.flightSnapshot?.premiumEconomyCapacity || 0} / Y ${flight.flightSnapshot?.economyCapacity || 0}`]])}
           ${sidePanel("Menu and Mapping", [["Mapping", flight.mappingSnapshot?.mappingCode || "-"], ["Menu", flight.menuSnapshot?.menuCode || "-"], ["Effective", `${flight.mappingSnapshot?.effectiveFrom || "-"} to ${flight.mappingSnapshot?.effectiveTo || "-"}`]])}
           ${sidePanel("Loading and Ancillary", [["Loading Sheet", flight.loadingSheetSnapshot?.loadingSheetCode || "-"], ["Version", flight.loadingSheetSnapshot?.version || "-"], ["Ancillary Items", flight.ancillarySnapshots?.length || 0]])}
@@ -4060,17 +4089,17 @@ function kotStageContent(step, flight) {
           ${readonlyField("Total Persons on Board", finalPassengerCount(flight) + crewCount(flight))}
           ${readonlyField("Remaining Capacity", Number(flight.capacity || 0) - finalPassengerCount(flight))}
         </div>
-        <label class="muted" style="display:block;margin-top:16px">Operational Remarks</label>
+        <label class="muted stage-label">Operational Remarks</label>
         <textarea onchange="updateFlightField('operationalRemarks', this.value)">${escapeHtml(flight.operationalRemarks || "")}</textarea>
-        <div style="margin-top:14px">${validationList("kot", flight)}</div>
+        <div class="stage-block">${validationList("kot", flight)}</div>
       </div>
     `,
     () => `
       <div class="panel kot-stage">
         <h2>Special Meals</h2>
         ${specialMealsTable(true)}
-        <div style="margin-top:14px">${validationList("special", flight)}</div>
-        <label class="muted" style="display:block;margin-top:16px">Remarks / Instructions</label>
+        <div class="stage-block">${validationList("special", flight)}</div>
+        <label class="muted stage-label">Remarks / Instructions</label>
         <textarea id="remarks" onchange="updateFlightField('operationalRemarks', this.value)">${escapeHtml(flight.operationalRemarks)}</textarea>
       </div>
     `,
@@ -4078,7 +4107,7 @@ function kotStageContent(step, flight) {
       <div class="panel kot-stage">
         <div class="panel-head"><h2>Ancillary Review and Overrides</h2><button class="btn green" onclick="calculateMeals()">Recalculate</button></div>
         ${dynamicAncillaryTable(flight, true)}
-        <div style="margin-top:14px">${validationList("ancillary", flight)}</div>
+        <div class="stage-block">${validationList("ancillary", flight)}</div>
       </div>
     `,
     () => `
@@ -4086,7 +4115,7 @@ function kotStageContent(step, flight) {
         <div class="panel-head"><h2>Automatic Meal Calculation</h2><button class="btn" onclick="setScreen('loading-preview')">Open Chart Preview</button></div>
         <div class="notice compact-notice"><span class="check">✓</span><div><b>Calculated from operation snapshot</b><br><span class="muted">Loading sheet, menu pricing, special meals, cabin counts, and ancillaries are calculated together.</span></div></div>
         ${dynamicMealCalculationTable(flight)}
-        <div style="margin-top:14px">${validationList("calculation", flight)}</div>
+        <div class="stage-block">${validationList("calculation", flight)}</div>
       </div>
     `,
     () => `
@@ -4095,12 +4124,24 @@ function kotStageContent(step, flight) {
         <div class="chart-header">
           ${[["Flight", flight.flightNo], ["Airline", flight.airline], ["Sector", flight.sector], ["Aircraft", flight.aircraft], ["Final Pax", calculatedKot(flight).finalPax], ["Total Meals", calculatedKot(flight).totalMeals], ["Special Meals", calculatedKot(flight).specialMeals], ["Ancillary Lines", calculatedKot(flight).ancillaries.length], ["KOT Status", badge(flight.kot)], ["Production", badge(flight.production)]].map(([label, value]) => `<div class="mini-card"><span class="muted">${label}</span><br><b>${value}</b></div>`).join("")}
         </div>
-        <div class="paper-grid equal" style="margin-top:14px">
-          ${dynamicMealCalculationTable(flight)}
-          ${specialMealsTable()}
+        <div class="review-stack">
+          <section class="review-section">
+            <h3>Meal Calculation</h3>
+            ${dynamicMealCalculationTable(flight)}
+          </section>
+          <section class="review-section">
+            <h3>Special Meals</h3>
+            ${specialMealsTable()}
+          </section>
+          <section class="review-section">
+            <h3>Ancillary Items</h3>
+            ${dynamicAncillaryTable(flight)}
+          </section>
+          <section class="review-section">
+            <h3>Validation Checklist</h3>
+            ${validationList("calculation", flight)}
+          </section>
         </div>
-        <div style="margin-top:14px">${dynamicAncillaryTable(flight)}</div>
-        <div style="margin-top:14px">${validationList("calculation", flight)}</div>
       </div>
     `
   ];
@@ -4110,9 +4151,9 @@ function kotStageContent(step, flight) {
 function kotStageFooter(step) {
   return `
     <div class="stage-footer">
-      <button class="btn" onclick="setKotStep(${step - 1})" ${step === 0 ? "disabled" : ""}>Previous</button>
+      <button type="button" class="btn" onclick="setKotStep(${step - 1})" ${step === 0 ? "disabled" : ""}>Previous</button>
       <span class="muted">Stage ${step + 1} of ${KOT_STEPS.length}: ${KOT_STEPS[step]}</span>
-      ${step < KOT_STEPS.length - 1 ? `<button class="btn green" onclick="setKotStep(${step + 1})">Next Stage</button>` : `<span><button class="btn green" onclick="confirmKot()">Confirm KOT</button> <button class="btn blue" onclick="sendToKitchen()">Send to Kitchen</button> <button class="btn" onclick="generateChallan()">Generate Challan</button></span>`}
+      ${step < KOT_STEPS.length - 1 ? `<button type="button" class="btn green" onclick="setKotStep(${step + 1})">Next Stage</button>` : `<span class="stage-footer-actions"><button type="button" class="btn green" onclick="confirmKot()">Confirm KOT</button><button type="button" class="btn blue" onclick="sendToKitchen()">Send to Kitchen</button><button type="button" class="btn" onclick="generateChallan()">Generate Challan</button></span>`}
     </div>
   `;
 }
@@ -4165,8 +4206,8 @@ function dynamicMealCalculationTable(flight = selectedFlight()) {
 function mealSnapshotTable(meals = [], specialMealLines = [], specialMealRule = "", totalMeals = 0, finalPax = 0) {
   const specialTotal = specialMealLines.reduce((sum, line) => sum + Number(line.quantity || 0), 0);
   return `
-    <div class="table-wrap">
-      <table class="compact-table meal-table">
+    <div class="table-wrap kot-table-wrap meal-calc-wrap">
+      <table class="compact-table meal-table meal-calc-table">
         <thead><tr><th>Meal Code</th><th>Meal Type</th><th>Menu Item</th><th>Ratio</th><th class="num">Calculated Qty</th><th>Rate Master</th></tr></thead>
         <tbody>
           ${meals.map((meal) => `<tr><td>${escapeHtml(meal.code)}</td><td>${escapeHtml(meal.type)}</td><td>${escapeHtml(meal.name)}</td><td>${escapeHtml(meal.ratio)}</td><td class="num"><strong>${meal.qty}</strong></td><td>${escapeHtml(meal.rateCode || meal.code)} @ ${Number(meal.rate || 0).toFixed(2)}</td></tr>`).join("")}
@@ -4183,8 +4224,8 @@ function specialMealsTable(editable = false) {
   const rows = specialMealEntries(flight);
   if (flight?.flightSnapshot) {
     return `
-      <div class="table-wrap">
-        <table class="compact-table special-meals-table">
+      <div class="table-wrap kot-table-wrap special-meals-wrap">
+        <table class="compact-table special-meals-table kot-special-meals-table">
           <thead><tr><th>Code</th><th>Description</th><th class="num">Quantity</th><th>Included in Pax</th><th>Additional Uplift</th><th>Remarks</th></tr></thead>
           <tbody>
             ${rows.map((row) => `<tr><td><strong>${row.code}</strong></td><td>${row.description}</td><td class="num">${editable ? `<input class="mini-input" value="${row.quantity}" onchange="updateSpecialMeal('${row.code}', this.value)">` : row.quantity}</td><td>Yes</td><td>No</td><td>${escapeHtml(row.remarks || "")}</td></tr>`).join("")}
@@ -4198,7 +4239,7 @@ function specialMealsTable(editable = false) {
   const keys = Object.keys(meals);
   const values = Object.values(meals);
   return `
-    <table class="compact-table special-meals-table">
+    <table class="compact-table special-meals-table kot-special-meals-table">
       <thead><tr>${keys.map((key) => `<th class="num">${key}</th>`).join("")}<th class="num">Total</th></tr></thead>
       <tbody><tr>${keys.map((key) => `<td class="num">${editable ? `<input class="mini-input" value="${meals[key]}" onchange="updateSpecialMeal('${key}', this.value)">` : meals[key]}</td>`).join("")}<td class="num">${values.reduce((a, b) => a + Number(b), 0)}</td></tr></tbody>
     </table>
@@ -4207,8 +4248,8 @@ function specialMealsTable(editable = false) {
 
 function specialMealsSnapshotTable(rows = []) {
   return `
-    <div class="table-wrap">
-      <table class="compact-table special-meals-table">
+      <div class="table-wrap kot-table-wrap special-meals-wrap">
+      <table class="compact-table special-meals-table kot-special-meals-table">
         <thead><tr><th>Code</th><th>Description</th><th class="num">Quantity</th><th>Included in Pax</th><th>Additional Uplift</th><th>Remarks</th></tr></thead>
         <tbody>
           ${rows.map((row) => `<tr><td><strong>${escapeHtml(row.code)}</strong></td><td>${escapeHtml(row.description)}</td><td class="num">${Number(row.quantity || 0)}</td><td>${row.includedInPassengerCount ? "Yes" : "No"}</td><td>${row.additionalUplift ? "Yes" : "No"}</td><td>${escapeHtml(row.remarks || "")}</td></tr>`).join("") || `<tr><td colspan="6" class="empty-state">No special meals in this snapshot.</td></tr>`}
@@ -4227,8 +4268,8 @@ function dynamicAncillaryTable(flight = selectedFlight(), editable = false) {
 function ancillarySnapshotTable(rows = [], editable = false) {
   if (rows.length && rows[0].itemCode) {
     return `
-      <div class="table-wrap">
-        <table class="compact-table ancillary-table">
+      <div class="table-wrap kot-table-wrap ancillary-wrap">
+        <table class="compact-table ancillary-table kot-ancillary-table">
           <thead><tr><th>Item Code</th><th>Item Name</th><th>Unit</th><th>Master Rule</th><th class="num">Calculated</th><th>Override</th><th class="num">Final Qty</th><th class="num">Rate</th><th>Invoice</th></tr></thead>
           <tbody>${rows.map((row, index) => `<tr>
             <td>${escapeHtml(row.itemCode)}</td>
@@ -4236,7 +4277,7 @@ function ancillarySnapshotTable(rows = [], editable = false) {
             <td>${escapeHtml(row.unit)}</td>
             <td>${escapeHtml(row.masterCalculationRule || row.rule || "")}</td>
             <td class="num">${row.calculatedQuantity ?? row.qty}</td>
-            <td>${row.overrideAllowed && editable ? `<input class="mini-input" value="${escapeHtml(row.overrideQuantity)}" placeholder="Qty" onchange="updateAncillary(${index}, 'overrideQuantity', this.value)"> <input class="input cell-input" value="${escapeHtml(row.overrideReason)}" placeholder="Reason" onchange="updateAncillary(${index}, 'overrideReason', this.value)">` : row.overrideReason ? escapeHtml(row.overrideReason) : row.overrideAllowed ? "Allowed" : "Locked"}</td>
+            <td>${row.overrideAllowed && editable ? `<div class="override-fields"><input class="mini-input override-qty" value="${escapeHtml(row.overrideQuantity)}" placeholder="Qty" onchange="updateAncillary(${index}, 'overrideQuantity', this.value)"><input class="input cell-input override-reason" value="${escapeHtml(row.overrideReason)}" placeholder="Reason" onchange="updateAncillary(${index}, 'overrideReason', this.value)"></div>` : row.overrideReason ? escapeHtml(row.overrideReason) : row.overrideAllowed ? "Allowed" : "Locked"}</td>
             <td class="num"><strong>${row.finalQuantity ?? row.qty}</strong></td>
             <td class="num">${Number(row.invoiceRate || row.unitRate || 0).toFixed(2)}</td>
             <td>${row.invoiceEnabled ? "Yes" : "No"}</td>
@@ -4246,7 +4287,7 @@ function ancillarySnapshotTable(rows = [], editable = false) {
     `;
   }
   return `
-    <table class="compact-table ancillary-table">
+    <table class="compact-table ancillary-table kot-ancillary-table">
       <thead><tr><th>Item</th><th>Unit</th><th>Rule</th><th class="num">Quantity</th></tr></thead>
       <tbody>${rows.map((row, index) => `<tr><td>${editable ? `<input class="input cell-input dish-input" value="${escapeHtml(row.item)}" onchange="updateAncillary(${index}, 'item', this.value)">` : row.item}</td><td>${row.unit}</td><td>${row.rule}</td><td class="num"><strong>${row.qty}</strong></td></tr>`).join("")}</tbody>
     </table>
@@ -4327,11 +4368,15 @@ function renderKotList() {
   const body = `
     <section class="content">
       <div class="toolbar">
-        <input class="field" type="date" value="${escapeHtml(state.operatingDate)}" onchange="setOperatingDate(this.value)">
-        <select class="field" onchange="setQueueFilter('status', this.value)">${["All Status", "Calculated", "Confirmed", "Sent to Kitchen", "In Progress", "Prepared", "Approved", "Dispatched"].map((item) => `<option ${filters.status === item ? "selected" : ""}>${item}</option>`).join("")}</select>
-        <select class="field" onchange="setQueueFilter('airline', this.value)">${["All Airlines", ...new Set(operationsForSelectedDate().map((flight) => flight.airline))].map((item) => `<option ${filters.airline === item ? "selected" : ""}>${item}</option>`).join("")}</select>
-        <input class="search" value="${escapeHtml(filters.search)}" placeholder="Search KOT, flight, airline..." oninput="state.queueFilters.search=this.value;saveState();render()">
-        <button class="btn" onclick="setScreen('kitchen')">Kitchen Board</button>
+        <div class="toolbar-group toolbar-group--start">
+          <input class="field" type="date" value="${escapeHtml(state.operatingDate)}" onchange="setOperatingDate(this.value)">
+          <select class="field" onchange="setQueueFilter('status', this.value)">${["All Status", "Calculated", "Confirmed", "Sent to Kitchen", "In Progress", "Prepared", "Approved", "Dispatched"].map((item) => `<option ${filters.status === item ? "selected" : ""}>${item}</option>`).join("")}</select>
+          <select class="field" onchange="setQueueFilter('airline', this.value)">${["All Airlines", ...new Set(operationsForSelectedDate().map((flight) => flight.airline))].map((item) => `<option ${filters.airline === item ? "selected" : ""}>${item}</option>`).join("")}</select>
+          <input class="search" value="${escapeHtml(filters.search)}" placeholder="Search KOT, flight, airline..." oninput="state.queueFilters.search=this.value;saveState();render()">
+        </div>
+        <div class="toolbar-group toolbar-group--end">
+          <button type="button" class="btn" onclick="setScreen('kitchen')">Kitchen Board</button>
+        </div>
       </div>
       <div class="table-wrap">
         <table>
@@ -4357,9 +4402,12 @@ function renderKitchen() {
   const body = `
     <section class="content">
       <div class="toolbar">
-        <button class="btn" onclick="setScreen('queue')">Back to Flight Queue</button>
-        <span style="flex:1"></span>
-        <button class="btn green" onclick="openDisplayWindow('kitchen')">Open Kitchen Display Window</button>
+        <div class="toolbar-group toolbar-group--start">
+          <button type="button" class="btn" onclick="setScreen('queue')">Back to Flight Queue</button>
+        </div>
+        <div class="toolbar-group toolbar-group--end">
+          <button type="button" class="btn green" onclick="openDisplayWindow('kitchen')">Open Kitchen Display Window</button>
+        </div>
       </div>
       <div class="panel">
         <div class="panel-head">
@@ -4752,14 +4800,17 @@ function renderChallanPreview() {
   const body = `
     <section class="content">
       <div class="toolbar">
-        <button class="btn" onclick="setScreen('kot')">Back to KOT Entry</button>
-        <span style="flex:1"></span>
-        ${challan ? `<button class="btn" onclick="setScreen('challan')">View Challan</button>` : `<button class="btn green" onclick="generateChallan()">Generate Challan</button>`}
-        <button class="btn ${challan && isChallanInvoiceReady(challan) ? "locked" : ""}" onclick="setScreen('kot')" ${challan && isChallanInvoiceReady(challan) ? "disabled" : ""}>Edit KOT</button>
-        <button class="btn" onclick="downloadDemoDocument('challan')">Download PDF</button>
-        ${challan ? `<button class="btn" onclick="updateChallanStatus('Checked')">Mark Checked</button><button class="btn green" onclick="updateChallanStatus('Approved')">Mark Approved</button><button class="btn blue" onclick="updateChallanStatus('Dispatched')">Mark Dispatched</button><button class="btn navy" onclick="lockChallan()">Lock Challan</button>` : ""}
-        ${invoiceReady ? `<button class="btn green" onclick="${existingInvoice ? "setupInvoiceFromChallan()" : "generateInvoice()"}">${existingInvoice ? "View Invoice" : "Generate Invoice"}</button>` : ""}
-        <button class="btn" onclick="window.print()">Print</button>
+        <div class="toolbar-group toolbar-group--start">
+          <button type="button" class="btn" onclick="setScreen('kot')">Back to KOT Entry</button>
+        </div>
+        <div class="toolbar-group toolbar-group--end">
+          ${challan ? `<button type="button" class="btn" onclick="setScreen('challan')">View Challan</button>` : `<button type="button" class="btn green" onclick="generateChallan()">Generate Challan</button>`}
+          <button type="button" class="btn ${challan && isChallanInvoiceReady(challan) ? "locked" : ""}" onclick="setScreen('kot')" ${challan && isChallanInvoiceReady(challan) ? "disabled" : ""}>Edit KOT</button>
+          <button type="button" class="btn" onclick="downloadDemoDocument('challan')">Download PDF</button>
+          ${challan ? `<button type="button" class="btn" onclick="updateChallanStatus('Checked')">Mark Checked</button><button type="button" class="btn green" onclick="updateChallanStatus('Approved')">Mark Approved</button><button type="button" class="btn blue" onclick="updateChallanStatus('Dispatched')">Mark Dispatched</button><button type="button" class="btn navy" onclick="lockChallan()">Lock Challan</button>` : ""}
+          ${invoiceReady ? `<button type="button" class="btn green" onclick="${existingInvoice ? "setupInvoiceFromChallan()" : "generateInvoice()"}">${existingInvoice ? "View Invoice" : "Generate Invoice"}</button>` : ""}
+          <button type="button" class="btn" onclick="window.print()">Print</button>
+        </div>
       </div>
       <div class="notice"><span class="check">${challan ? "✓" : "!"}</span><div><b>${challan ? "Snapshot Preview Loaded" : "No Challan Generated"}</b><br><span class="muted">${challan ? `This preview uses stored transaction snapshot data from ${escapeHtml(challan.challanNumber)}.` : "Confirm the KOT, then generate a Delivery Challan from the frozen KOT snapshot."}</span></div></div>
       <div class="preview-layout">
@@ -4785,12 +4836,15 @@ function renderInvoice() {
   const body = `
     <section class="content">
       <div class="toolbar">
-        <button class="btn" onclick="setScreen('challan-preview')">Back to Challan</button>
-        <span style="flex:1"></span>
-        <button class="btn blue" onclick="setupInvoiceFromChallan()">Load from Challan</button>
-        <button class="btn" onclick="showToast('Invoice draft saved locally.')">Save Draft</button>
-        <button class="btn" onclick="window.print()">Print Invoice</button>
-        <button class="btn green" onclick="generateInvoice()">${existingInvoice ? "View Invoice" : "Generate Invoice"}</button>
+        <div class="toolbar-group toolbar-group--start">
+          <button type="button" class="btn" onclick="setScreen('challan-preview')">Back to Challan</button>
+        </div>
+        <div class="toolbar-group toolbar-group--end">
+          <button type="button" class="btn blue" onclick="setupInvoiceFromChallan()">Load from Challan</button>
+          <button type="button" class="btn" onclick="showToast('Invoice draft saved locally.')">Save Draft</button>
+          <button type="button" class="btn" onclick="window.print()">Print Invoice</button>
+          <button type="button" class="btn green" onclick="generateInvoice()">${existingInvoice ? "View Invoice" : "Generate Invoice"}</button>
+        </div>
       </div>
       ${!challan ? `<div class="notice"><span class="check">!</span><div><b>No approved challan selected</b><br><span class="muted">Generate and approve a Delivery Challan before invoicing.</span></div></div>` : ""}
       ${invoicePaper(items, Number(totals.subtotal || 0), Number(totals.taxTotal || 0), Number(totals.grandTotal || 0), invoice, challan)}
@@ -4832,24 +4886,35 @@ function renderLoadingMaintenance() {
   const returnLabel = returnScreen === "menu-master" ? "Back to Menu Master" : "Back to Loading Sheet Master";
   const body = `
     <section class="content">
-      <div class="toolbar"><button class="btn" onclick="setScreen('${returnScreen}')">${returnLabel}</button><span style="flex:1"></span><button class="btn" onclick="setScreen('loading-preview')">Preview Loading Matrix</button><button class="btn" onclick="window.print()">Print Loading Chart</button><button class="btn green" onclick="saveLoadingSheetFromChart()">Save</button><button class="btn" onclick="setScreen('${returnScreen}')">Cancel</button></div>
+      <div class="toolbar">
+        <div class="toolbar-group toolbar-group--start">
+          <button type="button" class="btn" onclick="setScreen('${returnScreen}')">${returnLabel}</button>
+        </div>
+        <div class="toolbar-group toolbar-group--end">
+          <button type="button" class="btn" onclick="setScreen('loading-preview')">Preview Loading Matrix</button>
+          <button type="button" class="btn" onclick="window.print()">Print Loading Chart</button>
+          <button type="button" class="btn green" onclick="saveLoadingSheetFromChart()">Save</button>
+          <button type="button" class="btn" onclick="setScreen('${returnScreen}')">Cancel</button>
+        </div>
+      </div>
       <div class="panel"><h2>Chart Header</h2><div class="chart-header">
         ${formField("Airline *", chart.airline, "state.loadingChart.airline=this.value;saveState()")}
-        ${formField("Aircraft Type", chart.aircraftType, "state.loadingChart.aircraftType=this.value;saveState()")}
-        <label><span class="muted">Day of Ops</span><div class="day-pills"><b>1</b><span>2</span><span>3</span><span>4</span><span>5</span><span>6</span><span>7</span></div></label>
-        ${formField("Effective From", chart.effectiveFrom, "state.loadingChart.effectiveFrom=this.value;saveState()")}
         ${formField("Flight No. *", chart.flightNo, "state.loadingChart.flightNo=this.value;saveState()")}
-        ${formField("Meal Time *", chart.mealTime, "state.loadingChart.mealTime=this.value;saveState()")}
-        ${formField("Chart Code *", chart.chartCode, "state.loadingChart.chartCode=this.value;saveState()")}
-        ${formField("Effective To *", chart.effectiveTo, "state.loadingChart.effectiveTo=this.value;saveState()")}
         ${formField("Sector *", chart.sector, "state.loadingChart.sector=this.value;saveState()")}
+        ${formField("Aircraft Type", chart.aircraftType, "state.loadingChart.aircraftType=this.value;saveState()")}
         ${formField("Meal Type *", chart.mealType, "state.loadingChart.mealType=this.value;saveState()")}
+        ${formField("Meal Time *", chart.mealTime, "state.loadingChart.mealTime=this.value;saveState()")}
+        <label><span class="muted">Day of Ops</span><div class="day-pills"><b>1</b><span>2</span><span>3</span><span>4</span><span>5</span><span>6</span><span>7</span></div></label>
         ${formField("Version *", chart.version, "state.loadingChart.version=this.value;saveState()")}
+        ${formField("Chart Code *", chart.chartCode, "state.loadingChart.chartCode=this.value;saveState()")}
+        ${formField("Effective From", chart.effectiveFrom, "state.loadingChart.effectiveFrom=this.value;saveState()")}
+        ${formField("Effective To *", chart.effectiveTo, "state.loadingChart.effectiveTo=this.value;saveState()")}
+        <span class="chart-placeholder" aria-hidden="true"></span>
         ${formField("Rotation Effective From", chart.rotationFrom, "state.loadingChart.rotationFrom=this.value;saveState()")}
         ${formField("Rotation Effective To", chart.rotationTo, "state.loadingChart.rotationTo=this.value;saveState()")}
-        <label><span class="muted">Notes</span><textarea onchange="state.loadingChart.notes=this.value;saveState()">${escapeHtml(chart.notes)}</textarea></label>
+        <label class="chart-field--span-2"><span class="muted">Notes</span><textarea onchange="state.loadingChart.notes=this.value;saveState()">${escapeHtml(chart.notes)}</textarea></label>
       </div></div>
-      <div class="panel"><div style="display:flex;justify-content:space-between;align-items:center"><h2>Meal Loading Ratio Details</h2><div><button class="btn" onclick="addLoadingRow()">Add Row</button> <button class="btn danger" onclick="deleteLastLoadingRow()">Delete Row</button> <button class="btn" onclick="importLoadingRowsFromMenu()">Import from Template</button></div></div>${ratioTable()}</div>
+      <div class="panel"><div class="panel-head"><h2>Meal Loading Ratio Details</h2><div class="toolbar-group toolbar-group--end"><button type="button" class="btn" onclick="addLoadingRow()">Add Row</button><button type="button" class="btn danger" onclick="deleteLastLoadingRow()">Delete Row</button><button type="button" class="btn" onclick="importLoadingRowsFromMenu()">Import from Template</button></div></div>${ratioTable()}</div>
       <div class="paper-grid">
         <div class="panel"><h2>Ratio Type Guide</h2><p><b>1 : 1 (Per Pax)</b> = Item quantity increases one by one with each passenger.</p><p><b>J (Business)</b> = Quantity based on Business Class ratio.</p><p><b>W / Y</b> = Quantity based on cabin class ratio.</p></div>
         ${sidePanel("Summary", [["Total Items", chart.rows.length], ["Service", "1"], ["Meal Time", chart.mealType], ["Aircraft Capacity", chartTotalPax()], ["Chart Status", badge("confirmed")]])}
@@ -4864,7 +4929,7 @@ function loadingRows() {
 
 function ratioTable() {
   const ratioTypes = ["1 : 1 (Per Pax)", "J (Business)", "W (Premium Economy)", "Y (Economy)", "Crew"];
-  return `<div class="table-wrap"><table><thead><tr><th>Seq. No.</th><th>Service Seq.</th><th>Service Type</th><th>Dish Code</th><th>Dish Name</th><th>Unit</th><th>Ratio Type</th><th>Ratio Value</th><th>Min Pax</th><th>Max Pax</th><th>Remarks</th><th>Actions</th></tr></thead><tbody>${loadingRows().map((row, i) => `<tr><td>${i + 1}</td><td>1</td><td>${state.loadingChart.mealType}</td><td><input class="input cell-input" value="${escapeHtml(row.code)}" onchange="updateLoadingRow(${i}, 'code', this.value)"></td><td><input class="input cell-input dish-input" value="${escapeHtml(row.name)}" onchange="updateLoadingRow(${i}, 'name', this.value)"></td><td><input class="input cell-input" value="${escapeHtml(row.unit)}" onchange="updateLoadingRow(${i}, 'unit', this.value)"></td><td><select class="select cell-input" onchange="updateLoadingRow(${i}, 'ratioType', this.value)">${ratioTypes.map((type) => `<option ${type === row.ratioType ? "selected" : ""}>${type}</option>`).join("")}</select></td><td><input class="input cell-input" value="${escapeHtml(row.ratioValue)}" onchange="updateLoadingRow(${i}, 'ratioValue', this.value)"></td><td>1</td><td>9999</td><td>${escapeHtml(row.remarks)}</td><td><button class="btn icon-btn" onclick="deleteLoadingRow(${i})" title="Delete row">DL</button></td></tr>`).join("")}</tbody></table></div>`;
+  return `<div class="table-wrap"><table class="ratio-table"><thead><tr><th>Seq. No.</th><th>Service Seq.</th><th>Service Type</th><th>Dish Code</th><th>Dish Name</th><th>Unit</th><th>Ratio Type</th><th>Ratio Value</th><th>Min Pax</th><th>Max Pax</th><th>Remarks</th><th>Actions</th></tr></thead><tbody>${loadingRows().map((row, i) => `<tr><td>${i + 1}</td><td>1</td><td>${state.loadingChart.mealType}</td><td><input class="input cell-input" value="${escapeHtml(row.code)}" onchange="updateLoadingRow(${i}, 'code', this.value)"></td><td><input class="input cell-input dish-input" value="${escapeHtml(row.name)}" title="${escapeHtml(row.name)}" onchange="updateLoadingRow(${i}, 'name', this.value)"></td><td><input class="input cell-input" value="${escapeHtml(row.unit)}" onchange="updateLoadingRow(${i}, 'unit', this.value)"></td><td><select class="select cell-input" onchange="updateLoadingRow(${i}, 'ratioType', this.value)">${ratioTypes.map((type) => `<option ${type === row.ratioType ? "selected" : ""}>${type}</option>`).join("")}</select></td><td><input class="input cell-input" value="${escapeHtml(row.ratioValue)}" onchange="updateLoadingRow(${i}, 'ratioValue', this.value)"></td><td>1</td><td>9999</td><td class="cell-wrap">${escapeHtml(row.remarks)}</td><td><button type="button" class="btn icon-btn" onclick="deleteLoadingRow(${i})" title="Delete row" aria-label="Delete loading row ${i + 1}">DL</button></td></tr>`).join("")}</tbody></table></div>`;
 }
 
 function renderLoadingPreview() {
@@ -4872,7 +4937,16 @@ function renderLoadingPreview() {
   const chart = state.loadingChart;
   const body = `
     <section class="content">
-      <div class="toolbar"><button class="btn" onclick="setScreen('loading-maintenance')">Back to Meal Loading Chart</button><span style="flex:1"></span><button class="btn" onclick="downloadDemoDocument('loading-chart')">Download PDF</button><button class="btn" onclick="window.print()">Print Chart</button><button class="btn">Export to Excel</button></div>
+      <div class="toolbar">
+        <div class="toolbar-group toolbar-group--start">
+          <button type="button" class="btn" onclick="setScreen('loading-maintenance')">Back to Meal Loading Chart</button>
+        </div>
+        <div class="toolbar-group toolbar-group--end">
+          <button type="button" class="btn" onclick="downloadDemoDocument('loading-chart')">Download PDF</button>
+          <button type="button" class="btn" onclick="window.print()">Print Chart</button>
+          <button type="button" class="btn">Export to Excel</button>
+        </div>
+      </div>
       <div class="panel"><div class="chart-header">${chartHeaderCards().map(([a,b]) => `<div class="info-row"><span>${a}</span><b>${b}</b></div>`).join("")}</div></div>
       <div class="panel chart-capacity-panel"><div><div class="tabs"><button class="active">All Classes</button><button>Business (J)</button><button>Premium Economy (W)</button><button>Economy (Y)</button><button>Crew</button></div></div><div class="capacity-cards"><div><span>Aircraft Capacity</span><b>${chartTotalPax()}</b></div><div><span>Business (J)</span><b>${chart.capacity.j}</b></div><div><span>Premium Economy (W)</span><b>${chart.capacity.w}</b></div><div><span>Economy (Y)</span><b>${chart.capacity.y}</b></div><div><span>Crew</span><b>${chart.capacity.crew}</b></div></div></div>
       <div class="matrix-page">
@@ -4907,7 +4981,7 @@ function openFlightModal(flightNo = state.selectedOperationId || state.selectedF
   document.body.insertAdjacentHTML("beforeend", `
     <div class="modal-backdrop" onclick="closeModal(event)">
       <div class="modal" role="dialog" aria-modal="true">
-        <div class="modal-head"><h2 style="margin:0">Flight Operational Review</h2><button class="btn icon-btn" onclick="closeModal()">×</button></div>
+        <div class="modal-head"><h2 style="margin:0">Flight Operational Review</h2><button type="button" class="btn icon-btn" onclick="closeModal()" aria-label="Close dialog" title="Close">×</button></div>
         <div class="modal-body">
           <div class="chart-header">
             ${[["Flight Number", flight.flightNo], ["Airline", flight.airline], ["Sector", flight.sector], ["Aircraft", flight.aircraft], ["Registration", flight.reg], ["STD", flight.std], ["Capacity", flight.capacity], ["Final Pax", calc.finalPax], ["Meal Counts", calc.totalMeals], ["Menu Plan", flight.mealPlan], ["Loading Sheet", flight.loadingSheetSnapshot?.loadingSheetCode || "-"], ["Configuration", badge(flight.configurationStatus || "Ready")], ["KOT Status", badge(flight.kot)]].map(([label, value]) => `<div class="mini-card"><span class="muted">${label}</span><br><b>${value}</b></div>`).join("")}
